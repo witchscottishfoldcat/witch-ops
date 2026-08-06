@@ -87,7 +87,7 @@ foreach ($name in $pngTargets.Keys) {
 #    Keep raw bytes in File IO (real byte[]), never through the pipeline,
 #    and write with explicit (buffer, offset, count): PowerShell pipeline
 #    unrolls/coerces arrays and corrupts binary output.
-$frames = @(16, 24, 32, 48, 64, 256)
+$frames = @(16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
 $tmpPaths = @()
 foreach ($f in $frames) {
     $bmp = New-CatIcon $f
