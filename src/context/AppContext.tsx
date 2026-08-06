@@ -401,7 +401,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ============ SFTP ============
   const refreshSftpFiles = useCallback(async () => {
-    if (!activeServerId) return;
+    // 未连接不发请求(否则启动/未连接时必弹"服务器未连接")
+    if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
     // 目录导航是用户主动操作,失败必须可见(持久错误条 + toast)
     try {
       setSftpFiles(await ipc.sftpListDir(activeServerId, sftpPath));
@@ -412,7 +413,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setSftpError(msg);
       handleError(e);
     }
-  }, [activeServerId, sftpPath]);
+  }, [activeServerId, sftpPath, connectedServerIds]);
   useEffect(() => { refreshSftpFiles(); }, [refreshSftpFiles]);
 
   // 切换服务器后路径重置到根目录(避免在 B 服务器访问 A 服务器的路径)
@@ -452,10 +453,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ============ Metrics ============
   const refreshMetrics = useCallback(async () => {
-    if (!activeServerId) return;
+    // 未连接不发请求(避免启动时无意义的后端报错)
+    if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
     // 后台轮询:失败静默(只记日志),不弹全局错误
     try { setMetrics(await ipc.getMetrics(activeServerId)); } catch (e) { silentError(e); }
-  }, [activeServerId]);
+  }, [activeServerId, connectedServerIds]);
   useEffect(() => {
     refreshMetrics();
     const t = setInterval(refreshMetrics, 5000); // 每 5 秒刷新
@@ -465,9 +467,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ============ Containers & Services ============
   // 后台自动刷新:失败静默;用户主动操作(controlContainer/controlService):失败弹提示
   const refreshContainers = useCallback(async () => {
-    if (!activeServerId) return;
+    if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
     try { setContainers(await ipc.listContainers(activeServerId)); } catch (e) { silentError(e); }
-  }, [activeServerId]);
+  }, [activeServerId, connectedServerIds]);
   useEffect(() => { refreshContainers(); }, [refreshContainers]);
 
   const controlContainer = async (containerId: string, action: ContainerAction['action']) => {
@@ -479,9 +481,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const refreshServices = useCallback(async () => {
-    if (!activeServerId) return;
+    if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
     try { setServices(await ipc.listServices(activeServerId)); } catch (e) { silentError(e); }
-  }, [activeServerId]);
+  }, [activeServerId, connectedServerIds]);
   useEffect(() => { refreshServices(); }, [refreshServices]);
 
   const controlService = async (serviceName: string, action: string) => {
