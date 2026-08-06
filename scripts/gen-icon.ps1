@@ -26,52 +26,23 @@ function New-CatIcon([int]$size) {
     $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
     $g.Clear([System.Drawing.Color]::Transparent)
 
-    # base plate: dark rounded square with vertical gradient
-    $bgPath = Get-RoundedRectPath (1.5 * $s) (1.5 * $s) (45 * $s) (45 * $s) (12 * $s)
-    $bgBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-        (New-Object System.Drawing.PointF(0, 0)),
-        (New-Object System.Drawing.PointF(0, $size)),
-        [System.Drawing.Color]::FromArgb(255, 35, 35, 39),
-        [System.Drawing.Color]::FromArgb(255, 21, 21, 23))
+    # base plate: flat ink-black rounded square (Apple monochrome)
+    $bgPath = Get-RoundedRectPath 0 0 $size $size ($size * 0.234)
+    $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 28, 28, 30))
     $g.FillPath($bgBrush, $bgPath)
-    $borderPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(24, 255, 255, 255), [Math]::Max(1.0, $s))
-    $g.DrawPath($borderPen, $bgPath)
 
-    # minimalist line-art cat face (cyan -> purple gradient stroke)
-    $gradBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-        (New-Object System.Drawing.PointF(0, 0)),
-        (New-Object System.Drawing.PointF($size, $size)),
-        [System.Drawing.Color]::FromArgb(255, 100, 210, 255),
-        [System.Drawing.Color]::FromArgb(255, 191, 90, 242))
+    # glyph: terminal prompt ">_" in flat white, round caps/joins
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255, 245, 245, 247), (4.6 * $s))
+    $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+    $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+    $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
 
-    $catPath = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $catPath.AddLines([System.Drawing.PointF[]]@(
-        (New-Object System.Drawing.PointF((15.5 * $s), (21.5 * $s))),
-        (New-Object System.Drawing.PointF((17.2 * $s), (10.8 * $s))),
-        (New-Object System.Drawing.PointF((24.0 * $s), (16.2 * $s))),
-        (New-Object System.Drawing.PointF((30.8 * $s), (10.8 * $s))),
-        (New-Object System.Drawing.PointF((32.5 * $s), (21.5 * $s)))))
-    $catPath.AddBezier(
-        (New-Object System.Drawing.PointF((32.5 * $s), (21.5 * $s))),
-        (New-Object System.Drawing.PointF((35.5 * $s), (25.5 * $s))),
-        (New-Object System.Drawing.PointF((35.0 * $s), (32.5 * $s))),
-        (New-Object System.Drawing.PointF((24.0 * $s), (36.2 * $s))))
-    $catPath.AddBezier(
-        (New-Object System.Drawing.PointF((24.0 * $s), (36.2 * $s))),
-        (New-Object System.Drawing.PointF((13.0 * $s), (32.5 * $s))),
-        (New-Object System.Drawing.PointF((12.5 * $s), (25.5 * $s))),
-        (New-Object System.Drawing.PointF((15.5 * $s), (21.5 * $s))))
-    $catPath.CloseFigure()
-
-    $linePen = New-Object System.Drawing.Pen($gradBrush, (2.6 * $s))
-    $linePen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-    $linePen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-    $linePen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-    $g.DrawPath($linePen, $catPath)
-
-    # dot eyes
-    $g.FillEllipse($gradBrush, (18.4 * $s), (23.9 * $s), (3.2 * $s), (3.2 * $s))
-    $g.FillEllipse($gradBrush, (26.4 * $s), (23.9 * $s), (3.2 * $s), (3.2 * $s))
+    $chevron = [System.Drawing.PointF[]]@(
+        (New-Object System.Drawing.PointF((15.0 * $s), (16.5 * $s))),
+        (New-Object System.Drawing.PointF((22.5 * $s), (24.0 * $s))),
+        (New-Object System.Drawing.PointF((15.0 * $s), (31.5 * $s))))
+    $g.DrawLines($pen, $chevron)
+    $g.DrawLine($pen, (27.0 * $s), (31.5 * $s), (36.0 * $s), (31.5 * $s))
 
     $g.Dispose()
     return $bmp
