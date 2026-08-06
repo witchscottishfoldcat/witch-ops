@@ -1,0 +1,57 @@
+[package]
+name = "witchcat-ops"
+version = "0.1.0"
+description = "Witchcat Ops — AI Agent 服务器运维工具(后端)"
+authors = ["witchcat"]
+edition = "2021"
+
+[lib]
+# `_lib` 后缀避免与 bin 名冲突(Windows 平台特有问题)
+name = "witchcat_ops_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# === 后端核心依赖 ===
+
+# SSH 客户端(纯 Rust 异步实现,替代 dartssh2)
+# 用 ring 作为 crypto 后端(避免 aws-lc-rs 需要 NASM 汇编器)
+russh = { version = "0.62", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "2"
+ssh-key = "0.6"
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+
+# 数据库(SQLite + 编译期校验 SQL)
+# 注意:sqlx 的 macros 需 DATABASE_URL,这里用 runtime 模式,关闭 macros 校验
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "chrono", "json"] }
+
+# 加密:AES-GCM-256 + PBKDF2(凭证库)
+ring = "0.17"
+# OS keychain(macOS Keychain / Windows Credential Manager / Linux Secret Service)
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+
+# 时间处理
+chrono = { version = "0.4", features = ["serde"] }
+# SHA256(指纹计算)
+sha2 = "0.10"
+# 唯一 ID
+uuid = { version = "1", features = ["v4", "serde"] }
+# 日志
+log = "0.4"
+env_logger = "0.11"
+# 错误处理
+thiserror = "2"
+anyhow = "1"
+# Base64 / Hex 编码
+base64 = "0.22"
+hex = "0.4"
+# 异步 trait
+async-trait = "0.1"

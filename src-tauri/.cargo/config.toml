@@ -1,0 +1,9 @@
+# Cargo 本地配置
+#
+# 系统 WDAC + 安全软件(腾讯电脑管家等)的应用控制策略会阻止从
+# D:\ADM 和部分路径执行 cargo 编译出的 build script(报 os error 4551)。
+# 经测试,用户 Documents 目录放行 build script 执行。
+# 因此把 target 目录指到 Documents 下。源码仍在 D:\ADM\witchcat-ops。
+
+[build]
+target-dir = "C:/Users/92964/Documents/witchcat-ops-target"

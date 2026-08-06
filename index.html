@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tauri + React + Typescript</title>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script>
+      // 全局错误捕获:黑屏时把错误显示出来,便于诊断
+      window.addEventListener('error', (e) => {
+        document.body.style.background = '#300';
+        document.body.style.color = '#fff';
+        document.body.style.padding = '20px';
+        document.body.style.fontFamily = 'monospace';
+        document.body.innerHTML = '<h2>⚠️ JS 运行时错误</h2><pre>' + (e.error ? e.error.stack : e.message) + '</pre>';
+      });
+      window.addEventListener('unhandledrejection', (e) => {
+        document.body.style.background = '#300';
+        document.body.style.color = '#fff';
+        document.body.style.padding = '20px';
+        document.body.style.fontFamily = 'monospace';
+        document.body.innerHTML = '<h2>⚠️ 未处理的 Promise 错误</h2><pre>' + (e.reason ? (e.reason.stack || JSON.stringify(e.reason)) : 'unknown') + '</pre>';
+      });
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
