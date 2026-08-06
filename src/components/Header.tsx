@@ -1,7 +1,10 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { Shield, Lock, Unlock, Server, Bot, Terminal, Search, Palette, Moon, Sun, Heart, Zap } from 'lucide-react';
+import { Lock, Unlock, Server, Bot, Terminal, Search, Palette, Moon, Sun, Heart, Zap, X, Minus, Plus } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { CustomSelect } from './CustomSelect';
+
+const appWindow = getCurrentWindow();
 
 export const Header: React.FC = () => {
   const {
@@ -36,17 +39,23 @@ export const Header: React.FC = () => {
   }));
 
   return (
-    <header className="header-bar">
+    <header className="header-bar" data-tauri-drag-region>
       <div className="header-left">
-        {/* macOS Traffic Light Buttons */}
+        {/* macOS 三键(无边框窗口,接管窗口控制) */}
         <div className="mac-traffic-lights">
-          <div className="traffic-light traffic-light-close" title="Close" />
-          <div className="traffic-light traffic-light-minimize" title="Minimize" />
-          <div className="traffic-light traffic-light-maximize" title="Zoom" />
+          <button className="traffic-light traffic-light-close" title="关闭" onClick={() => appWindow.close()}>
+            <X size={9} strokeWidth={3} />
+          </button>
+          <button className="traffic-light traffic-light-minimize" title="最小化" onClick={() => appWindow.minimize()}>
+            <Minus size={9} strokeWidth={3} />
+          </button>
+          <button className="traffic-light traffic-light-maximize" title="最大化/还原" onClick={() => appWindow.toggleMaximize()}>
+            <Plus size={9} strokeWidth={3} />
+          </button>
         </div>
 
-        <div className="brand-logo">
-          <Shield size={18} style={{ color: 'var(--apple-blue)' }} />
+        <div className="brand-logo" data-tauri-drag-region>
+          <img src="/logo.svg" alt="Witchcat" style={{ width: 22, height: 22, borderRadius: 6 }} draggable={false} />
           <span>Witchcat<span style={{ color: 'var(--apple-purple)', marginLeft: 2 }}>Ops</span></span>
           <span style={{ fontSize: 10, background: 'rgba(191, 90, 242, 0.15)', color: 'var(--apple-purple)', padding: '1px 6px', borderRadius: 10, marginLeft: 4, fontWeight: 600 }}>
             v2.4 Pro

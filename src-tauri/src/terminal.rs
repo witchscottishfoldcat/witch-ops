@@ -146,7 +146,7 @@ async fn run_terminal_loop(
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut data_chunks: u64 = 0;
 
-    log::info!("终端 {terminal_id} 事件循环已启动,等待 channel 数据");
+    log::debug!("终端 {terminal_id} 事件循环已启动,等待 channel 数据");
 
     loop {
         tokio::select! {
@@ -155,9 +155,9 @@ async fn run_terminal_loop(
                 match msg {
                     Some(ChannelMsg::Data { ref data }) => {
                         data_chunks += 1;
-                        // 诊断:前 5 个 chunk 必记,之后每 50 个记一次
+                        // 诊断:前 5 个 chunk 必记,之后每 50 个记一次(debug 级)
                         if data_chunks <= 5 || data_chunks % 50 == 0 {
-                            log::info!(
+                            log::debug!(
                                 "终端 {terminal_id} 收到输出 chunk #{data_chunks} ({} 字节),已 emit",
                                 data.len()
                             );

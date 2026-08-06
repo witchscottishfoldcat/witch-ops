@@ -109,6 +109,7 @@ interface AppContextType {
   sftpPath: string;
   setSftpPath: (path: string) => void;
   sftpFiles: DirEntry[];
+  sftpError: string | null;
   refreshSftpFiles: () => Promise<void>;
   readSftpFile: (path: string) => Promise<string | null>;
   writeSftpFile: (path: string, content: string) => Promise<void>;
@@ -162,6 +163,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [docs, setDocs] = useState<Doc[]>([]);
   const [sftpPath, setSftpPath] = useState('/');
   const [sftpFiles, setSftpFiles] = useState<DirEntry[]>([]);
+  const [sftpError, setSftpError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<ServerMetrics | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -390,9 +392,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ============ SFTP ============
   const refreshSftpFiles = useCallback(async () => {
     if (!activeServerId) return;
-    // 目录导航是用户主动操作,失败必须弹错误(无权限/不存在等)
-    try { setSftpFiles(await ipc.sftpListDir(activeServerId, sftpPath)); }
-    catch (e) { handleError(e); setSftpFiles([]); }
+    // 目录导航是用户主动操作,失败必须可见(持久错误条 + toast)
+    try {
+      setSftpFiles(await ipc.sftpListDir(activeServerId, sftpPath));
+      setSftpError(null);
+    } catch (e) {
+      const msg = typeof e === 'string' ? e : (e as { message?: string })?.message ?? String(e);
+      setSftpFiles([]);
+      setSftpError(msg);
+      handleError(e);
+    }
   }, [activeServerId, sftpPath]);
   useEffect(() => { refreshSftpFiles(); }, [refreshSftpFiles]);
 
@@ -499,7 +508,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       skills, refreshSkills, upsertSkill, toggleSkill, deleteSkill,
       quickActions, refreshQuickActions, upsertQuickAction, deleteQuickAction, runQuickAction,
       docs, refreshDocs, upsertDoc, updateDocStatus, deleteDoc, convertDocToSkill,
-      sftpPath, setSftpPath, sftpFiles, refreshSftpFiles, readSftpFile, writeSftpFile,
+      sftpPath, setSftpPath, sftpFiles, sftpError, refreshSftpFiles, readSftpFile, writeSftpFile,
       deleteSftpEntry, createSftpDir,
       metrics, refreshMetrics,
       containers, refreshContainers, controlContainer,

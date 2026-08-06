@@ -30,7 +30,7 @@ const parentPath = (p: string) => {
 
 export const SftpBrowser: React.FC = () => {
   const {
-    sftpPath, setSftpPath, sftpFiles, refreshSftpFiles,
+    sftpPath, setSftpPath, sftpFiles, sftpError, refreshSftpFiles,
     readSftpFile, writeSftpFile, deleteSftpEntry, createSftpDir,
     activeServerId, servers,
   } = useApp();
@@ -266,8 +266,19 @@ export const SftpBrowser: React.FC = () => {
 
             {sftpFiles.length === 0 && !creatingDir && (
               <tr>
-                <td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--text-dim)', fontSize: 12 }}>
-                  {activeServerId ? '空目录(或读取失败,详见错误提示)' : '请先选择服务器'}
+                <td colSpan={6} style={{ textAlign: 'center', padding: 24, fontSize: 12 }}>
+                  {sftpError ? (
+                    <div>
+                      <div style={{ color: 'var(--accent-rose)', marginBottom: 8 }}>目录读取失败: {sftpError}</div>
+                      <button className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => refreshSftpFiles()}>
+                        <RefreshCw size={11} /> 重试
+                      </button>
+                    </div>
+                  ) : (
+                    <span style={{ color: 'var(--text-dim)' }}>
+                      {activeServerId ? '空目录' : '请先选择服务器'}
+                    </span>
+                  )}
                 </td>
               </tr>
             )}

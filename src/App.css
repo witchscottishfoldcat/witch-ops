@@ -246,7 +246,7 @@ body {
   gap: 16px;
 }
 
-/* Traffic Lights Window Controls */
+/* Traffic Lights Window Controls(无边框窗口的真实窗口控制) */
 .mac-traffic-lights {
   display: flex;
   align-items: center;
@@ -259,12 +259,19 @@ body {
   height: 12px;
   border-radius: 50%;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: rgba(0, 0, 0, 0.55);
 }
+.traffic-light svg { opacity: 0; transition: opacity 0.12s ease; pointer-events: none; }
+.mac-traffic-lights:hover .traffic-light svg { opacity: 1; }
+.traffic-light:hover { transform: scale(1.12); }
 .traffic-light-close { background-color: #ff5f56; border: 0.5px solid rgba(0,0,0,0.2); }
 .traffic-light-minimize { background-color: #ffbd2e; border: 0.5px solid rgba(0,0,0,0.2); }
 .traffic-light-maximize { background-color: #27c93f; border: 0.5px solid rgba(0,0,0,0.2); }
-.mac-traffic-lights:hover .traffic-light { opacity: 0.85; }
 
 .brand-logo {
   display: flex;
@@ -670,3 +677,88 @@ select option {
   font-size: 13px;
   margin-top: 3px;
 }
+
+/* ==================== 质感精修层 ==================== */
+/* 同优先级下本层规则覆盖上文同名规则 */
+
+/* 背景:顶部极轻微的环境光晕(Apple 式氛围) */
+body {
+  background-image:
+    radial-gradient(1200px 500px at 70% -10%, rgba(100, 210, 255, 0.045), transparent 60%),
+    radial-gradient(900px 420px at 15% -8%, rgba(191, 90, 242, 0.04), transparent 55%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* 玻璃卡:顶部内高光 + 更立体的投影,hover 轻微上浮 */
+.glass-card {
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.18s ease,
+              background-color 0.25s ease,
+              border-color 0.25s ease;
+}
+.glass-card:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* 按钮:按压回弹反馈 */
+.btn { transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1); }
+.btn:active { transform: scale(0.96); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* 输入框:focus 蓝色辉光环 */
+.input-field {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.25s ease;
+}
+.input-field:focus {
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.22);
+  outline: none;
+}
+
+/* 标题栏:更细腻的底部渐变相邻线 */
+.header-bar {
+  border-bottom: 1px solid transparent;
+  background-image: linear-gradient(var(--apple-sidebar-bg), var(--apple-sidebar-bg)),
+    linear-gradient(90deg, transparent, rgba(255,255,255,0.09), transparent);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+/* 侧栏导航:按压反馈 */
+.sidebar-nav-item { transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1); }
+.sidebar-nav-item:active { transform: scale(0.98); }
+
+/* 弹窗:遮罩模糊 + 内容弹入 */
+.modal-overlay {
+  backdrop-filter: blur(8px) saturate(160%);
+  animation: fadeIn 0.15s ease;
+}
+.modal-content {
+  animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* 页面标题:字距收紧,更利落 */
+.page-title { letter-spacing: -0.02em; }
+
+/* 表格行:hover 高亮 */
+.data-table tbody tr { transition: background-color 0.12s ease; }
+.data-table tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
+
+/* 滚动条:纤细贴边 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.28); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
+::-webkit-scrollbar-track { background: transparent; }

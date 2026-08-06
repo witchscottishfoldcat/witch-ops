@@ -27,11 +27,18 @@ pub async fn sftp_list_dir(
     server_id: i64,
     path: String,
 ) -> AppResult<Vec<DirEntry>> {
-    let sftp = state.ssh.open_sftp(server_id).await?;
+    log::info!("SFTP list_dir: server={server_id} path='{path}'");
+    let sftp = state.ssh.open_sftp(server_id).await.map_err(|e| {
+        log::error!("SFTP 子系统打开失败(server={server_id}): {e}");
+        e
+    })?;
     let entries = sftp
         .read_dir(&path)
         .await
-        .map_err(|e| AppError::Ssh(format!("读取目录失败: {e}")))?;
+        .map_err(|e| {
+            log::error!("SFTP read_dir('{path}') 失败: {e}");
+            AppError::Ssh(format!("读取目录失败: {e}"))
+        })?;
 
     let mut result = Vec::new();
     for entry in entries {
@@ -68,6 +75,7 @@ pub async fn sftp_list_dir(
         (false, true) => std::cmp::Ordering::Greater,
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
+    log::info!("SFTP read_dir('{path}') 成功: {} 个条目", result.len());
     Ok(result)
 }
 

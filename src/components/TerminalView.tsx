@@ -154,8 +154,6 @@ export const TerminalView: React.FC = () => {
       if (!inst.term.element) {
         inst.term.open(container);
         ipc.frontendLog(`xterm.open 完成 tab=${activeTab.id.slice(0, 16)} 容器=${container.clientWidth}x${container.clientHeight}`);
-        // 诊断标记:证明 xterm 已挂载且能渲染(看不到此行 = 挂载/渲染层坏了)
-        inst.term.write(`\x1b[2;37m[本地] xterm 已挂载,等待服务器输出…\x1b[0m\r\n`);
       } else if (inst.term.element.parentElement !== container) {
         container.appendChild(inst.term.element);
       }
