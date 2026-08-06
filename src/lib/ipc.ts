@@ -18,6 +18,11 @@ export const vaultUnlock = (masterPassword: string) =>
   invoke<void>('vault_unlock', { masterPassword });
 export const vaultLock = () => invoke<void>('vault_lock');
 export const vaultIsUnlocked = () => invoke<boolean>('vault_is_unlocked');
+/** 忘记密码:用本机钥匙串备份重设主密码(凭证全保留) */
+export const vaultRecover = (newPassword: string) =>
+  invoke<void>('vault_recover', { newPassword });
+/** 彻底重置 Vault(清空所有已存凭证,不可恢复) */
+export const vaultReset = () => invoke<void>('vault_reset');
 
 // ============ 服务器 ============
 export const listServers = () => invoke<Server[]>('list_servers');

@@ -114,3 +114,22 @@ pub async fn vault_lock(state: State<'_, AppState>) -> AppResult<()> {
 pub async fn vault_is_unlocked(state: State<'_, AppState>) -> AppResult<bool> {
     Ok(state.vault().await.is_some())
 }
+
+/// 忘记密码:用本机钥匙串备份的 data key 重设主密码(凭证全保留)
+#[tauri::command]
+pub async fn vault_recover(
+    state: State<'_, AppState>,
+    new_password: String,
+) -> AppResult<()> {
+    let vault = Vault::recover_with_keychain(&new_password, state.db()).await?;
+    state.set_vault(vault).await;
+    Ok(())
+}
+
+/// 彻底重置 Vault(清空所有已存凭证,不可恢复)
+#[tauri::command]
+pub async fn vault_reset(state: State<'_, AppState>) -> AppResult<()> {
+    Vault::reset_all(state.db()).await?;
+    state.clear_vault().await;
+    Ok(())
+}

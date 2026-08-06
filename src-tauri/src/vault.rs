@@ -141,6 +141,76 @@ impl Vault {
         Ok(load_metadata(db).await?.is_some())
     }
 
+    /// 忘记密码的本机恢复:用 OS keychain 里备份的 data key 重设主密码。
+    ///
+    /// 安全前提:能读取当前 OS 账户的 keychain,等价于已登录本机 ——
+    /// 与 data key 存 keychain 的威胁模型一致。data key 不变,
+    /// 所有已加密凭证保持可用,仅换 salt/wrapped/verifier。
+    pub async fn recover_with_keychain(new_password: &str, db: &SqlitePool) -> AppResult<Self> {
+        let metadata = load_metadata(db).await?
+            .ok_or_else(|| AppError::Vault("Vault 尚未初始化".into()))?;
+
+        // 从 keychain 取备份的 data key
+        let b64 = load_from_keychain(KEYCHAIN_DATA_KEY_USER)
+            .map_err(|_| AppError::Vault(
+                "本机钥匙串中没有 Vault 备份,无法恢复(只能彻底重置)".into(),
+            ))?;
+        let decoded = base64::engine::general_purpose::STANDARD.decode(&b64)
+            .map_err(|_| AppError::Crypto("钥匙串备份解码失败".into()))?;
+        if decoded.len() != DATA_KEY_LEN {
+            return Err(AppError::Crypto("钥匙串备份长度异常".into()));
+        }
+        let mut key = [0u8; DATA_KEY_LEN];
+        key.copy_from_slice(&decoded);
+
+        // 校验备份与库中 verifier 匹配(防止恢复到别的 Vault 上)
+        let verifier_ct = base64::engine::general_purpose::STANDARD
+            .decode(&metadata.verifier)
+            .map_err(|_| AppError::Crypto("verifier 解码失败".into()))?;
+        let pt = open(&key, &verifier_ct)
+            .map_err(|_| AppError::Vault("钥匙串备份与当前 Vault 不匹配,无法恢复".into()))?;
+        if pt != VERIFIER_PLAINTEXT {
+            return Err(AppError::Vault("钥匙串备份与当前 Vault 不匹配,无法恢复".into()));
+        }
+
+        // 用新主密码重新包装同一个 data key
+        let rng = SystemRandom::new();
+        let mut salt = [0u8; SALT_LEN];
+        rng.fill(&mut salt)
+            .map_err(|e| AppError::Crypto(format!("生成 salt 失败: {e}")))?;
+        let kek = derive_kek(new_password, &salt);
+        let wrapped = seal(&kek, &key)?;
+        let verifier = seal(&key, VERIFIER_PLAINTEXT)?;
+
+        let new_metadata = VaultMetadata {
+            salt: hex::encode(salt),
+            wrapped_data_key: Some(base64::engine::general_purpose::STANDARD.encode(wrapped)),
+            verifier: base64::engine::general_purpose::STANDARD.encode(verifier),
+            iterations: PBKDF2_ITERATIONS,
+        };
+        save_metadata(&new_metadata, db).await?;
+
+        log::info!("Vault 已通过钥匙串备份重设主密码");
+        Ok(Vault { data_key: key })
+    }
+
+    /// 彻底重置:删除 Vault 元数据 + 清空所有已存敏感值(不可恢复!)
+    pub async fn reset_all(db: &SqlitePool) -> AppResult<()> {
+        sqlx::query("DELETE FROM vault_metadata WHERE id = 1")
+            .execute(db)
+            .await?;
+        // 已加密的值没有 data key 永远无法解开,清空避免残留垃圾
+        sqlx::query("UPDATE servers SET credential_enc = NULL WHERE credential_enc IS NOT NULL")
+            .execute(db)
+            .await?;
+        sqlx::query("UPDATE agent_providers SET api_key_enc = '' WHERE api_key_enc != ''")
+            .execute(db)
+            .await?;
+        let _ = delete_from_keychain(KEYCHAIN_DATA_KEY_USER);
+        log::warn!("Vault 已彻底重置,所有已存凭证已清空");
+        Ok(())
+    }
+
     /// 加密明文,返回 base64 密文
     pub fn encrypt(&self, plaintext: &[u8]) -> AppResult<String> {
         let ct = seal(&self.data_key, plaintext)?;
@@ -241,6 +311,15 @@ fn load_from_keychain(username: &str) -> AppResult<String> {
         .map_err(|e| AppError::Keychain(format!("创建 keychain entry 失败: {e}")))?;
     entry.get_password()
         .map_err(|e| AppError::Keychain(format!("读取 keychain 失败: {e}")))
+}
+
+fn delete_from_keychain(username: &str) -> AppResult<()> {
+    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, username)
+        .map_err(|e| AppError::Keychain(format!("创建 keychain entry 失败: {e}")))?;
+    entry
+        .delete_credential()
+        .map_err(|e| AppError::Keychain(format!("删除 keychain 失败: {e}")))?;
+    Ok(())
 }
 
 // ==================== 元数据持久化 ====================

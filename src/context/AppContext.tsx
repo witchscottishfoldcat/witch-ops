@@ -39,6 +39,8 @@ interface AppContextType {
   unlockVault: (pass: string) => Promise<boolean>;
   lockVault: () => Promise<void>;
   setupVault: (pass: string) => Promise<boolean>;
+  recoverVault: (pass: string) => Promise<boolean>;
+  resetVault: () => Promise<boolean>;
 
   // Theme
   theme: string;
@@ -210,6 +212,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
   const lockVault = async () => {
     try { await ipc.vaultLock(); setIsVaultUnlocked(false); } catch (e) { handleError(e); }
+  };
+  const recoverVault = async (pass: string) => {
+    try { await ipc.vaultRecover(pass); await refreshVaultState(); return true; }
+    catch (e) { handleError(e); return false; }
+  };
+  const resetVault = async () => {
+    try { await ipc.vaultReset(); await refreshVaultState(); return true; }
+    catch (e) { handleError(e); return false; }
   };
 
   // ============ Servers ============
@@ -499,6 +509,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     <AppContext.Provider value={{
       theme, setTheme, isSidebarCollapsed, toggleSidebar,
       isVaultInitialized, isVaultUnlocked, unlockVault, lockVault, setupVault,
+      recoverVault, resetVault,
       activeView, setActiveView, activeServerId, setActiveServerId,
       pendingHostKey, confirmHostKey, cancelHostKey,
       servers, connectedServerIds, refreshServers, connectServer, disconnectServer,

@@ -207,6 +207,8 @@ pub fn run() {
             commands::vault_unlock,
             commands::vault_lock,
             commands::vault_is_unlocked,
+            commands::vault_recover,
+            commands::vault_reset,
             // servers
             commands::list_servers,
             commands::get_server,

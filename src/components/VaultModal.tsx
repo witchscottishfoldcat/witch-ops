@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Lock, Unlock, Key, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Lock, Unlock, Key, ShieldCheck, ShieldAlert, LifeBuoy, Trash2 } from 'lucide-react';
 
 /**
  * Vault 凭证库卡片
@@ -11,11 +11,17 @@ import { Lock, Unlock, Key, ShieldCheck, ShieldAlert } from 'lucide-react';
  * 3. 已解锁 → 显示状态 + 锁定按钮
  */
 export const VaultModal: React.FC = () => {
-  const { isVaultInitialized, isVaultUnlocked, unlockVault, lockVault, setupVault } = useApp();
+  const { isVaultInitialized, isVaultUnlocked, unlockVault, lockVault, setupVault, recoverVault, resetVault } = useApp();
   const [pass, setPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  // 忘记密码恢复区
+  const [showRecover, setShowRecover] = useState(false);
+  const [newPass, setNewPass] = useState('');
+  const [newPass2, setNewPass2] = useState('');
+  const [recoverMsg, setRecoverMsg] = useState('');
+  const [confirmReset, setConfirmReset] = useState(false);
 
   // ============ 已解锁:显示状态 ============
   if (isVaultUnlocked) {
@@ -117,6 +123,36 @@ export const VaultModal: React.FC = () => {
     }
   };
 
+  // 钥匙串恢复:重设主密码(凭证保留)
+  const handleRecover = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRecoverMsg('');
+    if (newPass.length < 6) { setRecoverMsg('新主密码至少 6 位'); return; }
+    if (newPass !== newPass2) { setRecoverMsg('两次输入的密码不一致'); return; }
+    setBusy(true);
+    const ok = await recoverVault(newPass);
+    setBusy(false);
+    if (ok) {
+      setShowRecover(false);
+      setNewPass(''); setNewPass2('');
+    }
+    // 失败时错误已由全局 toast 展示(如"钥匙串中没有备份")
+  };
+
+  // 彻底重置(两步确认)
+  const handleReset = async () => {
+    if (!confirmReset) {
+      setConfirmReset(true);
+      setTimeout(() => setConfirmReset(false), 3000);
+      return;
+    }
+    setBusy(true);
+    await resetVault();
+    setBusy(false);
+    setConfirmReset(false);
+    setShowRecover(false);
+  };
+
   return (
     <div className="glass-card" style={{ marginBottom: 20, borderLeft: '4px solid var(--accent-rose)', background: 'rgba(244, 63, 94, 0.05)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
@@ -147,6 +183,70 @@ export const VaultModal: React.FC = () => {
         </button>
       </form>
       {errorMsg && <div style={{ color: 'var(--accent-rose)', fontSize: 12, marginTop: 8 }}>{errorMsg}</div>}
+
+      {/* 忘记密码入口 */}
+      <div style={{ marginTop: 10, fontSize: 12 }}>
+        <span
+          style={{ color: 'var(--accent-cyan)', cursor: 'pointer' }}
+          onClick={() => { setShowRecover(!showRecover); setRecoverMsg(''); }}
+        >
+          忘记主密码?
+        </span>
+      </div>
+
+      {showRecover && (
+        <div style={{ marginTop: 10, padding: 12, borderRadius: 8, background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* 方案一:钥匙串恢复 */}
+          <form onSubmit={handleRecover}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <LifeBuoy size={13} style={{ color: 'var(--accent-emerald)' }} /> 用本机钥匙串恢复(推荐)
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+              data key 在本 Windows 账户的凭据管理器里有备份,可用它直接重设主密码,<strong>已存凭证全部保留</strong>。
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input
+                type="password"
+                className="input-field"
+                placeholder="新主密码(至少 6 位)"
+                value={newPass}
+                onChange={e => { setNewPass(e.target.value); setRecoverMsg(''); }}
+                style={{ fontSize: 12, height: 32 }}
+              />
+              <input
+                type="password"
+                className="input-field"
+                placeholder="再次输入确认"
+                value={newPass2}
+                onChange={e => { setNewPass2(e.target.value); setRecoverMsg(''); }}
+                style={{ fontSize: 12, height: 32 }}
+              />
+              <button type="submit" className="btn btn-primary" disabled={busy} style={{ alignSelf: 'flex-start', fontSize: 12 }}>
+                <LifeBuoy size={13} /> {busy ? '恢复中...' : '重设主密码并解锁'}
+              </button>
+            </div>
+            {recoverMsg && <div style={{ color: 'var(--accent-rose)', fontSize: 12, marginTop: 6 }}>{recoverMsg}</div>}
+          </form>
+
+          {/* 方案二:彻底重置 */}
+          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Trash2 size={13} style={{ color: 'var(--accent-rose)' }} /> 彻底重置(钥匙串也没有备份时)
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+              删除 Vault 并清空所有已存凭证(服务器密码、API Key 需重新填写),<strong>不可恢复</strong>。
+            </div>
+            <button
+              className="btn btn-danger"
+              style={{ fontSize: 12 }}
+              disabled={busy}
+              onClick={handleReset}
+            >
+              <Trash2 size={13} /> {confirmReset ? '再点一次确认清空!' : '重置 Vault'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
