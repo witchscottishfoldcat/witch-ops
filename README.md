@@ -1,7 +1,125 @@
-# Tauri + React + Typescript
+<div align="center">
+  <img src="public/logo.svg" width="96" alt="Witchcat Ops Logo" />
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+  # Witchcat Ops
 
-## Recommended IDE Setup
+  **AI Agent 驱动的服务器运维桌面工具**
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+  Tauri 2 · React 19 · Rust(russh / sqlx / ring)· xterm.js
+
+  灵感来自 [Solsynth/MaidKit](https://github.com/Solsynth/MaidKit),从零自研的定制化实现
+</div>
+
+---
+
+## 这是什么
+
+Witchcat Ops 把"AI Agent 运维"和"人工运维"统一到一台桌面应用里:AI 提出的每条命令都要经人审批才执行,**所有执行(无论来自 Agent、手动还是快捷指令)都汇入同一份审计日志**,审计日志再沉淀为运维文档和可复用技能 —— 形成"经验飞轮"。
+
+## 核心能力
+
+### 经验飞轮(项目灵魂)
+
+| 环节 | 说明 |
+|---|---|
+| **操作审计** | 统一执行出口 `execute_and_audit()`:谁、何时、哪台服务器、什么命令、结果、耗时、审批人,全部落库可查 |
+| **Skills 技能** | 双形态:SOP 知识包(Markdown,注入 Agent 上下文)+ 快捷指令(人类一键执行多步操作) |
+| **产出沉淀** | 审计日志 + LLM 总结自动生成运维文档,文档可一键 `doc_to_skill` 转为技能,反哺 Agent |
+
+### 基础运维
+
+- **服务器管理** —— SSH 密码/私钥连接,首次连接主机密钥指纹确认(TOFU),连接状态实时可见
+- **PTY 交互式终端** —— russh PTY + xterm.js,30s keep-alive 保活;输出缓冲时序设计保证初始输出零丢失;断线有明确提示
+- **SFTP 文件管理** —— 目录浏览(面包屑/上一级)、在线编辑文本文件(1MB 保护 + UTF-8 校验)、删除(两步确认)、新建目录、八进制权限显示、符号链接跟随
+- **监控仪表盘** —— CPU / 内存 / Load / Swap / 磁盘挂载点,实时轮询
+- **容器管理** —— Docker 容器列表与启停控制
+- **Systemd 服务** —— 服务列表与 start/stop/restart
+
+### AI Agent
+
+- **Agent Copilot** —— LLM 配置(多 Provider)存在后端 Vault,对话流由前端直连(流式 SSE,支持 reasoning 回显)
+- **提案/执行解耦** —— Agent 只产出命令提案,UI 审批后才进入统一执行出口,天然免疫"AI 擅自操作"
+
+### 安全
+
+- **Vault 凭证库** —— 主密码 → PBKDF2(310,000 次)→ 解包数据密钥 → AES-GCM-256 加密所有敏感数据;数据密钥托管于 OS 钥匙串(keyring),不落盘
+- 审计日志全量留存,危险操作可追溯
+
+## 界面
+
+苹果风设计:无边框窗口(macOS 三键接管窗口控制,悬停浮现符号)、玻璃拟态卡片、5 套主题(macOS 黑夜/白天、Bilibili 粉、赛博暗黑、Monokai 极客)、全矢量 lucide 图标。
+
+## 快速开始
+
+### 环境要求
+
+- Node.js 18+ / pnpm
+- Rust 工具链(rustup)
+- Windows:WebView2 Runtime(Win11 自带)
+
+### 开发
+
+```bash
+pnpm install
+pnpm tauri dev
+```
+
+### 构建
+
+```bash
+pnpm tauri build
+```
+
+### 重新生成图标
+
+Logo 源稿是 `public/logo.svg`(终端光标 `>_` 标)。全套 PNG/ICO 由脚本程序化绘制:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/gen-icon.ps1
+```
+
+### Windows 特殊说明(WDAC)
+
+本机 WDAC 策略会拦截多数路径下的 cargo 构建脚本(os error 4551),因此 `src-tauri/.cargo/config.toml` 把 `target-dir` 重定向到 `C:/Users/<you>/Documents/witchcat-ops-target`。换机器/换用户时注意调整。
+
+应用数据库:`%APPDATA%/com.witchcat.ops/app.db`(SQLite,启动自动建表)。
+
+## 项目结构
+
+```
+witchcat-ops/
+├── src/                        # 前端(React 19 + TS)
+│   ├── components/             #   17 个视图组件(终端/SFTP/监控/Agent/审计...)
+│   ├── context/AppContext.tsx  #   全局状态 + IPC 编排
+│   ├── lib/ipc.ts              #   类型安全的 invoke 封装 + 终端输出缓冲
+│   ├── lib/agent.ts            #   Agent 会话(流式对话/提案执行)
+│   └── types/backend.ts        #   前后端共享类型
+├── src-tauri/                  # 后端(Rust)
+│   ├── src/ssh.rs              #   russh 连接/执行/PTY/SFTP(含 keep-alive)
+│   ├── src/terminal.rs         #   终端 actor(事件流 ↔ 指令流)
+│   ├── src/executor.rs         #   统一执行出口(一切命令皆审计)
+│   ├── src/vault.rs            #   PBKDF2 + AES-GCM 凭证库
+│   ├── src/commands/           #   57 个 IPC 命令
+│   └── migrations/             #   14 张表 DDL
+├── scripts/gen-icon.ps1        # 图标程序化生成器
+└── docs/                       # 设计文档
+    ├── PROJECT_DESIGN.md           # 总体设计
+    ├── BACKEND_API.md              # 前后端 IPC 契约
+    └── MAIDKIT_LESSONS_AND_PLAN.md # MaidKit 源码研读笔记
+```
+
+## 路线图
+
+- [x] SSH / PTY / SFTP / 监控 / 容器 / 服务
+- [x] Vault 加密凭证库 + 审计日志
+- [x] Skills / 快捷指令 / 文档飞轮
+- [x] Agent Copilot(提案-审批-执行)
+- [ ] MCP Server(对外暴露运维能力,loopback HTTP+SSE)
+- [ ] SFTP 二进制上传/下载
+- [ ] 多标签终端分屏
+
+## 文档
+
+- [总体设计](docs/PROJECT_DESIGN.md)
+- [后端 IPC 契约](docs/BACKEND_API.md)
+- [MaidKit 研读与规划](docs/MAIDKIT_LESSONS_AND_PLAN.md)
