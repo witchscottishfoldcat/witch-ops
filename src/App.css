@@ -32,6 +32,20 @@
 
   --apple-blur: blur(40px) saturate(200%);
   --apple-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+
+  /* 兼容别名:组件引用的通用变量 → Apple 调色板
+     (var() 在使用时解析,浅色主题覆盖 --apple-* 后别名自动跟随) */
+  --accent-cyan: var(--apple-cyan);
+  --accent-purple: var(--apple-purple);
+  --accent-emerald: var(--apple-green);
+  --accent-rose: var(--apple-red);
+  --accent-amber: var(--apple-yellow);
+  --accent-pink: var(--apple-pink);
+  --accent-blue: var(--apple-blue);
+  --text-main: var(--apple-text);
+  --text-muted: var(--apple-text-muted);
+  --text-dim: var(--apple-text-dim);
+  --border-color: var(--apple-border);
 }
 
 /* Theme 2: macOS Light */

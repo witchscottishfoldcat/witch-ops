@@ -14,7 +14,9 @@ export const MetricsDashboard: React.FC = () => {
     );
   }
 
-  const memPercent = Math.round((metrics.mem_used / metrics.mem_total) * 100);
+  const memPercent = metrics.mem_total > 0 ? Math.round((metrics.mem_used / metrics.mem_total) * 100) : 0;
+  const swapPercent = metrics.swap_total > 0 ? Math.round((metrics.swap_used / metrics.swap_total) * 100) : 0;
+  const cpuPercent = Math.min(100, Math.max(0, metrics.cpu_usage));
   const uptimeDays = Math.floor(metrics.uptime_seconds / 86400);
 
   return (
@@ -41,10 +43,10 @@ export const MetricsDashboard: React.FC = () => {
             <span style={{ fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <Cpu size={16} style={{ color: 'var(--accent-cyan)' }} /> CPU 使用率
             </span>
-            <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent-cyan)' }}>{metrics.cpu_usage}%</span>
+            <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent-cyan)' }}>{cpuPercent.toFixed(1)}%</span>
           </div>
           <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}>
-            <div style={{ width: `${metrics.cpu_usage}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))' }} />
+            <div style={{ width: `${cpuPercent}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))' }} />
           </div>
         </div>
 
@@ -87,7 +89,7 @@ export const MetricsDashboard: React.FC = () => {
               <Clock size={16} style={{ color: 'var(--accent-pink)' }} /> Swap 交换区
             </span>
             <span style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>
-              {Math.round((metrics.swap_used / metrics.swap_total) * 100)}%
+              {swapPercent}%
             </span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
@@ -103,23 +105,25 @@ export const MetricsDashboard: React.FC = () => {
         </h3>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {metrics.disks.map((d, idx) => (
+          {metrics.disks.map((d, idx) => {
+            const pct = Math.min(100, Math.max(0, d.usage_percent));
+            return (
             <div key={idx} style={{ background: 'rgba(0,0,0,0.3)', padding: 12, borderRadius: 8, border: '1px solid var(--border-color)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <div>
                   <strong style={{ fontSize: 13 }}>{d.mount}</strong>
                   <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 8, fontFamily: 'var(--font-mono)' }}>({d.filesystem})</span>
                 </div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: d.usage_percent > 80 ? 'var(--accent-rose)' : 'var(--accent-emerald)' }}>
-                  {d.usage_percent}%
+                <span style={{ fontSize: 13, fontWeight: 700, color: pct > 80 ? 'var(--accent-rose)' : 'var(--accent-emerald)' }}>
+                  {pct.toFixed(1)}%
                 </span>
               </div>
 
               <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
                 <div style={{
-                  width: `${d.usage_percent}%`,
+                  width: `${pct}%`,
                   height: '100%',
-                  background: d.usage_percent > 80 ? 'var(--accent-rose)' : 'var(--accent-emerald)'
+                  background: pct > 80 ? 'var(--accent-rose)' : 'var(--accent-emerald)'
                 }} />
               </div>
 
@@ -129,7 +133,8 @@ export const MetricsDashboard: React.FC = () => {
                 <span>总量: {(d.total / 1024 / 1024).toFixed(1)} GB</span>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
