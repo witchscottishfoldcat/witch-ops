@@ -19,30 +19,33 @@ function Get-RoundedRectPath([float]$x, [float]$y, [float]$w, [float]$h, [float]
 }
 
 function New-CatIcon([int]$size) {
-    $s = $size / 48.0
     $bmp = New-Object System.Drawing.Bitmap($size, $size)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
     $g.Clear([System.Drawing.Color]::Transparent)
 
-    # base plate: flat ink-black rounded square (Apple monochrome)
-    $bgPath = Get-RoundedRectPath 0 0 $size $size ($size * 0.234)
+    # base plate: flat ink-black rounded square, inset ~6.25% so the rounded
+    # corners stay fully visible against any taskbar background (no bleed)
+    $off = $size * 0.0625
+    $inner = $size * 0.875
+    $bgPath = Get-RoundedRectPath $off $off $inner $inner ($inner * 0.26)
     $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 28, 28, 30))
     $g.FillPath($bgBrush, $bgPath)
 
-    # glyph: terminal prompt ">_" in flat white, round caps/joins
-    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255, 245, 245, 247), (4.6 * $s))
+    # glyph: terminal prompt ">_" flat white, drawn in the inset 42/48 grid
+    $gs = $inner / 48.0
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(255, 245, 245, 247), (4.6 * $gs))
     $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
     $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
 
     $chevron = [System.Drawing.PointF[]]@(
-        (New-Object System.Drawing.PointF((15.0 * $s), (16.5 * $s))),
-        (New-Object System.Drawing.PointF((22.5 * $s), (24.0 * $s))),
-        (New-Object System.Drawing.PointF((15.0 * $s), (31.5 * $s))))
+        (New-Object System.Drawing.PointF(($off + 15.0 * $gs), ($off + 16.5 * $gs))),
+        (New-Object System.Drawing.PointF(($off + 22.5 * $gs), ($off + 24.0 * $gs))),
+        (New-Object System.Drawing.PointF(($off + 15.0 * $gs), ($off + 31.5 * $gs))))
     $g.DrawLines($pen, $chevron)
-    $g.DrawLine($pen, (27.0 * $s), (31.5 * $s), (36.0 * $s), (31.5 * $s))
+    $g.DrawLine($pen, ($off + 27.0 * $gs), ($off + 31.5 * $gs), ($off + 36.0 * $gs), ($off + 31.5 * $gs))
 
     $g.Dispose()
     return $bmp

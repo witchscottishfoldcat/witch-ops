@@ -1,9 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-  <!-- 扁平品牌标:墨黑圆角底板 + 白终端提示符 >_ -->
-  <rect width="48" height="48" rx="11.2" fill="#1c1c1e"/>
-  <path d="M15 16.5 L22.5 24 L15 31.5"
-        fill="none" stroke="#f5f5f7" stroke-width="4.6"
-        stroke-linecap="round" stroke-linejoin="round"/>
-  <line x1="27" y1="31.5" x2="36" y2="31.5"
-        stroke="#f5f5f7" stroke-width="4.6" stroke-linecap="round"/>
+  <!-- 扁平品牌标:墨黑圆角底板(内缩留边)+ 白终端提示符 >_ -->
+  <rect x="3" y="3" width="42" height="42" rx="10.9" fill="#1c1c1e"/>
+  <g transform="translate(3,3) scale(0.875)">
+    <path d="M15 16.5 L22.5 24 L15 31.5"
+          fill="none" stroke="#f5f5f7" stroke-width="4.6"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="27" y1="31.5" x2="36" y2="31.5"
+          stroke="#f5f5f7" stroke-width="4.6" stroke-linecap="round"/>
+  </g>
 </svg>
