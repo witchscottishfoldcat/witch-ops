@@ -79,6 +79,20 @@ pub async fn sftp_read_file(
     path: String,
 ) -> AppResult<String> {
     let sftp = state.ssh.open_sftp(server_id).await?;
+
+    // 先 stat 大小:避免把超大文件整个读进内存后才拒绝(OOM 风险)
+    if let Ok(meta) = sftp.metadata(&path).await {
+        if meta.is_dir() {
+            return Err(AppError::InvalidInput("这是一个目录,无法作为文本读取".into()));
+        }
+        if meta.len() > 1024 * 1024 {
+            return Err(AppError::InvalidInput(format!(
+                "文件 {:.1} MB 超过 1MB 限制,请下载后用专门编辑器打开",
+                meta.len() as f64 / 1024.0 / 1024.0
+            )));
+        }
+    }
+
     let mut file = sftp
         .open(&path)
         .await
@@ -90,10 +104,7 @@ pub async fn sftp_read_file(
         .await
         .map_err(|e| AppError::Ssh(format!("读取文件失败: {e}")))?;
 
-    if buf.len() > 1024 * 1024 {
-        return Err(AppError::InvalidInput("文件超过 1MB,请用专门的编辑器".into()));
-    }
-    String::from_utf8(buf).map_err(|_| AppError::InvalidInput("文件不是合法 UTF-8 文本".into()))
+    String::from_utf8(buf).map_err(|_| AppError::InvalidInput("文件不是合法 UTF-8 文本(可能是二进制文件)".into()))
 }
 
 /// 写入文本文件

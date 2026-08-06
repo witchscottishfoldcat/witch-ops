@@ -1,27 +1,118 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { FolderTree, Folder, FileText, ChevronRight, Edit3, HardDrive, RefreshCw, X } from 'lucide-react';
+import {
+  FolderTree, Folder, FileText, ChevronRight, HardDrive, RefreshCw, X,
+  FolderPlus, Trash2, Link2, ArrowUp, Check,
+} from 'lucide-react';
+import * as ipc from '../lib/ipc';
+import type { DirEntry } from '../types/backend';
+
+/** 文件大小格式化 */
+const fmtSize = (n: number): string => {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+};
+
+/** unix mode → 八进制权限串(后端给的是含文件类型位的原始 mode) */
+const fmtPerm = (p: number | null): string => {
+  if (p == null) return '-';
+  return (p & 0o7777).toString(8).padStart(4, '0');
+};
+
+const joinPath = (base: string, name: string) => (base === '/' ? `/${name}` : `${base}/${name}`);
+const parentPath = (p: string) => {
+  const parts = p.split('/').filter(Boolean);
+  parts.pop();
+  return parts.length === 0 ? '/' : '/' + parts.join('/');
+};
 
 export const SftpBrowser: React.FC = () => {
-  const { sftpPath, setSftpPath, sftpFiles, readSftpFile, writeSftpFile, activeServerId, servers } = useApp();
+  const {
+    sftpPath, setSftpPath, sftpFiles, refreshSftpFiles,
+    readSftpFile, writeSftpFile, deleteSftpEntry, createSftpDir,
+    activeServerId, servers,
+  } = useApp();
+
   const [selectedFile, setSelectedFile] = useState<{ path: string; name: string } | null>(null);
   const [fileContent, setFileContent] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [loadingFile, setLoadingFile] = useState(false);
+  const [creatingDir, setCreatingDir] = useState(false);
+  const [newDirName, setNewDirName] = useState('');
+  // 两步删除:第一次点击进入确认态,3 秒内再点才真删
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const currentServer = servers.find(s => s.id === activeServerId);
+  const pathParts = sftpPath.split('/').filter(Boolean);
 
-  const handleItemClick = async (name: string, isDir: boolean) => {
-    if (isDir) {
-      const nextPath = sftpPath === '/' ? `/${name}` : `${sftpPath}/${name}`;
-      setSftpPath(nextPath);
-    } else {
-      const fullPath = sftpPath === '/' ? `/${name}` : `${sftpPath}/${name}`;
+  // 确认删除态 3 秒自动复位
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const t = setTimeout(() => setConfirmDelete(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDelete]);
+
+  const openFile = async (fullPath: string, name: string) => {
+    setLoadingFile(true);
+    try {
       const content = await readSftpFile(fullPath);
+      if (content === null) return; // 错误已由全局 toast 提示
       setSelectedFile({ path: fullPath, name });
       setFileContent(content);
+    } finally {
+      setLoadingFile(false);
     }
   };
 
-  const pathParts = sftpPath.split('/').filter(Boolean);
+  const handleItemClick = async (item: DirEntry) => {
+    const fullPath = joinPath(sftpPath, item.name);
+    if (item.is_symlink) {
+      // 符号链接:stat 跟随到目标,是目录就进,是文件就读
+      if (!activeServerId) return;
+      try {
+        const info = await ipc.sftpStat(activeServerId, fullPath);
+        if (info.exists && info.is_dir) { setSftpPath(fullPath); return; }
+        if (info.exists) { await openFile(fullPath, item.name); return; }
+      } catch { /* 落到下面按普通文件处理,错误会弹 toast */ }
+      return;
+    }
+    if (item.is_dir) {
+      setSftpPath(fullPath);
+    } else {
+      await openFile(fullPath, item.name);
+    }
+  };
+
+  const handleDelete = async (item: DirEntry) => {
+    const fullPath = joinPath(sftpPath, item.name);
+    if (confirmDelete !== fullPath) {
+      setConfirmDelete(fullPath);
+      return;
+    }
+    setConfirmDelete(null);
+    await deleteSftpEntry(fullPath, item.is_dir);
+  };
+
+  const handleCreateDir = async () => {
+    const name = newDirName.trim();
+    if (!name) return;
+    if (name.includes('/')) return; // 不允许嵌套路径,保持简单
+    setCreatingDir(false);
+    setNewDirName('');
+    await createSftpDir(joinPath(sftpPath, name));
+  };
+
+  const handleSave = async () => {
+    if (!selectedFile) return;
+    setSaving(true);
+    try {
+      await writeSftpFile(selectedFile.path, fileContent);
+      setSelectedFile(null);
+    } catch { /* 错误 toast 已由 context 弹出,保持编辑框不丢内容 */ }
+    finally { setSaving(false); }
+  };
 
   return (
     <div>
@@ -31,13 +122,13 @@ export const SftpBrowser: React.FC = () => {
             <FolderTree size={24} style={{ color: 'var(--accent-cyan)' }} />
             SFTP 远程文件管理器 (SFTP Operations)
           </h2>
-          <p className="page-subtitle">直接在前端浏览与编辑远程节点文本配置文件，支持 UTF-8 自动检错与权限控制。</p>
+          <p className="page-subtitle">直接在前端浏览与编辑远程节点文本配置文件,支持 UTF-8 自动检错与权限控制。</p>
         </div>
       </div>
 
       <div className="glass-card" style={{ marginBottom: 16, padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         {/* Breadcrumb Path */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontFamily: 'var(--font-mono)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontFamily: 'var(--font-mono)', flexWrap: 'wrap' }}>
           <HardDrive size={16} style={{ color: 'var(--accent-purple)' }} />
           <span style={{ color: 'var(--text-muted)' }}>{currentServer?.name || 'Server'}:</span>
           <span style={{ cursor: 'pointer', color: 'var(--accent-cyan)' }} onClick={() => setSftpPath('/')}>/</span>
@@ -54,9 +145,23 @@ export const SftpBrowser: React.FC = () => {
           ))}
         </div>
 
-        <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }}>
-          <RefreshCw size={12} /> 刷新目录
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn btn-secondary"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={() => { setNewDirName(''); setCreatingDir(true); }}
+            title="在当前目录新建文件夹"
+          >
+            <FolderPlus size={12} /> 新建目录
+          </button>
+          <button
+            className="btn btn-secondary"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={() => refreshSftpFiles()}
+          >
+            <RefreshCw size={12} /> 刷新目录
+          </button>
+        </div>
       </div>
 
       {/* File List Table */}
@@ -68,40 +173,104 @@ export const SftpBrowser: React.FC = () => {
               <th>类型</th>
               <th>大小</th>
               <th>修改时间</th>
-              <th>权限 (Permissions)</th>
+              <th>权限</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            {sftpFiles.map((item, idx) => (
-              <tr key={idx} style={{ cursor: 'pointer' }} onClick={() => handleItemClick(item.name, item.is_dir)}>
-                <td style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: item.is_dir ? 600 : 400 }}>
-                  {item.is_dir ? (
-                    <Folder size={16} style={{ color: 'var(--accent-amber)' }} />
-                  ) : (
-                    <FileText size={16} style={{ color: 'var(--accent-cyan)' }} />
-                  )}
-                  <span>{item.name}</span>
+            {/* 上一级 */}
+            {sftpPath !== '/' && (
+              <tr style={{ cursor: 'pointer' }} onClick={() => setSftpPath(parentPath(sftpPath))}>
+                <td style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)' }}>
+                  <ArrowUp size={16} /> <span>..</span>
                 </td>
-                <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{item.is_dir ? '目录' : '文件'}</td>
-                <td style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-                  {item.is_dir ? '-' : `${(item.size / 1024).toFixed(1)} KB`}
-                </td>
-                <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-                  {item.modified ? new Date(item.modified).toLocaleDateString() : '-'}
-                </td>
-                <td style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--accent-emerald)' }}>
-                  {item.permissions ? `0${item.permissions}` : '0755'}
-                </td>
-                <td>
-                  {!item.is_dir && (
-                    <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: 11 }}>
-                      <Edit3 size={12} /> 查看/修改
+                <td colSpan={5} style={{ fontSize: 12, color: 'var(--text-dim)' }}>上一级目录</td>
+              </tr>
+            )}
+
+            {/* 新建目录内联输入行 */}
+            {creatingDir && (
+              <tr>
+                <td colSpan={6}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <FolderPlus size={16} style={{ color: 'var(--accent-amber)' }} />
+                    <input
+                      className="input-field"
+                      style={{ flex: 1, height: 28, fontSize: 12 }}
+                      placeholder="输入新目录名,回车创建"
+                      value={newDirName}
+                      autoFocus
+                      onChange={e => setNewDirName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleCreateDir();
+                        if (e.key === 'Escape') setCreatingDir(false);
+                      }}
+                    />
+                    <button className="btn btn-primary" style={{ padding: '2px 10px', fontSize: 11 }} onClick={handleCreateDir}>
+                      <Check size={12} /> 创建
                     </button>
-                  )}
+                    <button className="btn btn-secondary" style={{ padding: '2px 10px', fontSize: 11 }} onClick={() => setCreatingDir(false)}>
+                      取消
+                    </button>
+                  </div>
                 </td>
               </tr>
-            ))}
+            )}
+
+            {sftpFiles.map((item, idx) => {
+              const fullPath = joinPath(sftpPath, item.name);
+              const confirming = confirmDelete === fullPath;
+              return (
+                <tr key={idx} style={{ cursor: 'pointer' }} onClick={() => handleItemClick(item)}>
+                  <td style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: item.is_dir ? 600 : 400 }}>
+                    {item.is_symlink ? (
+                      <Link2 size={16} style={{ color: 'var(--accent-purple)' }} />
+                    ) : item.is_dir ? (
+                      <Folder size={16} style={{ color: 'var(--accent-amber)' }} />
+                    ) : (
+                      <FileText size={16} style={{ color: 'var(--accent-cyan)' }} />
+                    )}
+                    <span>{item.name}</span>
+                    {item.is_symlink && <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>(链接)</span>}
+                  </td>
+                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {item.is_symlink ? '符号链接' : item.is_dir ? '目录' : '文件'}
+                  </td>
+                  <td style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+                    {item.is_dir ? '-' : fmtSize(item.size)}
+                  </td>
+                  <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                    {item.modified ? new Date(item.modified).toLocaleString() : '-'}
+                  </td>
+                  <td style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--accent-emerald)' }}>
+                    {fmtPerm(item.permissions)}
+                  </td>
+                  <td onClick={e => e.stopPropagation()}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{
+                        padding: '2px 8px', fontSize: 11,
+                        color: confirming ? '#fff' : undefined,
+                        background: confirming ? 'var(--accent-rose)' : undefined,
+                        borderColor: confirming ? 'var(--accent-rose)' : undefined,
+                      }}
+                      onClick={() => handleDelete(item)}
+                      title={confirming ? '再次点击确认删除' : '删除'}
+                    >
+                      <Trash2 size={12} /> {confirming ? '确认删除?' : '删除'}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {sftpFiles.length === 0 && !creatingDir && (
+              <tr>
+                <td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--text-dim)', fontSize: 12 }}>
+                  {activeServerId ? '空目录(或读取失败,详见错误提示)' : '请先选择服务器'}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -111,7 +280,7 @@ export const SftpBrowser: React.FC = () => {
         <div className="modal-overlay">
           <div className="modal-content" style={{ width: 720 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700 }}>在线编辑文件: {selectedFile.name}</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700 }}>在线编辑: {selectedFile.name}</h3>
               <button className="btn btn-secondary" style={{ padding: 4 }} onClick={() => setSelectedFile(null)}><X size={16} /></button>
             </div>
 
@@ -125,17 +294,18 @@ export const SftpBrowser: React.FC = () => {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <button className="btn btn-secondary" onClick={() => setSelectedFile(null)}>取消</button>
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  writeSftpFile(selectedFile.path, fileContent);
-                  setSelectedFile(null);
-                }}
-              >
-                保存写入服务器 (sftp_write_file)
+              <button className="btn btn-primary" disabled={saving} onClick={handleSave}>
+                {saving ? '写入中…' : '保存写入服务器'}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 读取文件中的轻提示 */}
+      {loadingFile && (
+        <div style={{ position: 'fixed', bottom: 20, right: 20, fontSize: 12, color: 'var(--text-muted)', background: 'var(--apple-popover-bg)', padding: '6px 12px', borderRadius: 8, border: '1px solid var(--apple-border)' }}>
+          正在读取文件…
         </div>
       )}
     </div>

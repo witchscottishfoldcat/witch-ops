@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   Server, ServerInput, AuditLog, AuditFilter, Skill, QuickAction, Doc,
   Provider, ProviderInput, Container, ContainerAction, Service, ServerMetrics,
@@ -110,8 +110,10 @@ interface AppContextType {
   setSftpPath: (path: string) => void;
   sftpFiles: DirEntry[];
   refreshSftpFiles: () => Promise<void>;
-  readSftpFile: (path: string) => Promise<string>;
+  readSftpFile: (path: string) => Promise<string | null>;
   writeSftpFile: (path: string, content: string) => Promise<void>;
+  deleteSftpEntry: (path: string, isDir: boolean) => Promise<void>;
+  createSftpDir: (path: string) => Promise<void>;
 
   // Metrics
   metrics: ServerMetrics | null;
@@ -158,7 +160,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [skills, setSkills] = useState<Skill[]>([]);
   const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
-  const [sftpPath, setSftpPath] = useState('/home');
+  const [sftpPath, setSftpPath] = useState('/');
   const [sftpFiles, setSftpFiles] = useState<DirEntry[]>([]);
   const [metrics, setMetrics] = useState<ServerMetrics | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
@@ -388,20 +390,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ============ SFTP ============
   const refreshSftpFiles = useCallback(async () => {
     if (!activeServerId) return;
-    // 路径切换时自动刷新:失败静默(目录可能无权限等)
+    // 目录导航是用户主动操作,失败必须弹错误(无权限/不存在等)
     try { setSftpFiles(await ipc.sftpListDir(activeServerId, sftpPath)); }
-    catch (e) { silentError(e); }
+    catch (e) { handleError(e); setSftpFiles([]); }
   }, [activeServerId, sftpPath]);
   useEffect(() => { refreshSftpFiles(); }, [refreshSftpFiles]);
 
-  const readSftpFile = async (path: string) => {
-    if (!activeServerId) throw new Error('未选择服务器');
-    return ipc.sftpReadFile(activeServerId, path);
+  // 切换服务器后路径重置到根目录(避免在 B 服务器访问 A 服务器的路径)
+  const prevSftpServerRef = useRef(activeServerId);
+  useEffect(() => {
+    if (prevSftpServerRef.current !== activeServerId) {
+      prevSftpServerRef.current = activeServerId;
+      setSftpPath('/');
+    }
+  }, [activeServerId]);
+
+  const readSftpFile = async (path: string): Promise<string | null> => {
+    if (!activeServerId) return null;
+    try { return await ipc.sftpReadFile(activeServerId, path); }
+    catch (e) { handleError(e); return null; }
   };
   const writeSftpFile = async (path: string, content: string) => {
     if (!activeServerId) throw new Error('未选择服务器');
-    await ipc.sftpWriteFile(activeServerId, path, content);
-    await refreshSftpFiles();
+    try {
+      await ipc.sftpWriteFile(activeServerId, path, content);
+      await refreshSftpFiles();
+    } catch (e) { handleError(e); throw e; }
+  };
+  const deleteSftpEntry = async (path: string, isDir: boolean) => {
+    if (!activeServerId) return;
+    try {
+      if (isDir) await ipc.sftpRmdir(activeServerId, path);
+      else await ipc.sftpDeleteFile(activeServerId, path);
+      await refreshSftpFiles();
+    } catch (e) { handleError(e); }
+  };
+  const createSftpDir = async (path: string) => {
+    if (!activeServerId) return;
+    try { await ipc.sftpMkdir(activeServerId, path); await refreshSftpFiles(); }
+    catch (e) { handleError(e); }
   };
 
   // ============ Metrics ============
@@ -473,6 +500,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       quickActions, refreshQuickActions, upsertQuickAction, deleteQuickAction, runQuickAction,
       docs, refreshDocs, upsertDoc, updateDocStatus, deleteDoc, convertDocToSkill,
       sftpPath, setSftpPath, sftpFiles, refreshSftpFiles, readSftpFile, writeSftpFile,
+      deleteSftpEntry, createSftpDir,
       metrics, refreshMetrics,
       containers, refreshContainers, controlContainer,
       services, refreshServices, controlService,
