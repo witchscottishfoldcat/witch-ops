@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Terminal as TermIcon, Plus, X } from 'lucide-react';
+import { Terminal as TermIcon, Plus, X, Bot } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import * as ipc from '../lib/ipc';
+import { AgentChatPanel } from './AgentChatPanel';
 
 /**
  * 交互式终端视图(重写版)
@@ -48,6 +49,15 @@ export const TerminalView: React.FC = () => {
   // 用 state 强制触发重渲染(当容器需要挂载时)
   const [, forceUpdate] = useState(0);
   const mountPointRef = useRef<HTMLDivElement>(null);
+
+  // 右侧 AI 面板:可折叠,记忆用户选择
+  const [showAi, setShowAi] = useState(() => localStorage.getItem('terminal_ai_panel') !== 'off');
+  const toggleAi = () => {
+    setShowAi(prev => {
+      localStorage.setItem('terminal_ai_panel', prev ? 'off' : 'on');
+      return !prev;
+    });
+  };
 
   const activeTab = terminalTabs.find(t => t.id === activeTerminalId);
 
@@ -240,16 +250,28 @@ export const TerminalView: React.FC = () => {
             </span>
           )}
         </div>
-        <button
-          className="btn btn-secondary"
-          style={{ fontSize: 12, height: 30 }}
-          onClick={handleOpenTerminal}
-        >
-          <Plus size={14} /> 打开新终端
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className={showAi ? 'btn btn-primary' : 'btn btn-secondary'}
+            style={{ fontSize: 12, height: 30 }}
+            onClick={toggleAi}
+            title={showAi ? '收起右侧 AI 面板' : '展开右侧 AI 面板'}
+          >
+            <Bot size={14} /> AI 助手
+          </button>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: 12, height: 30 }}
+            onClick={handleOpenTerminal}
+          >
+            <Plus size={14} /> 打开新终端
+          </button>
+        </div>
       </div>
 
-      <div className="terminal-window" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* 终端 + 右侧 AI 面板 */}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 12 }}>
+        <div className="terminal-window" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
         <div className="terminal-header">
           <div className="terminal-tabs">
             {terminalTabs.map(t => (
@@ -285,6 +307,14 @@ export const TerminalView: React.FC = () => {
             </div>
           )}
         </div>
+        </div>
+
+        {/* 右侧 AI 对话面板(紧凑模式,独立会话) */}
+        {showAi && (
+          <div className="glass-card" style={{ width: 360, flexShrink: 0, padding: 12, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <AgentChatPanel compact />
+          </div>
+        )}
       </div>
     </div>
   );

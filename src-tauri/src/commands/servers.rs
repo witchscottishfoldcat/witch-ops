@@ -37,8 +37,7 @@ pub async fn create_server(
 
     let credential_enc = match (&input.auth_method, &input.credential) {
         (_, Some(cred)) if !cred.is_empty() => {
-            let vault = state.require_vault()?;
-            Some(vault.encrypt_str(cred)?)
+            Some(state.seal_secret(cred).await?)
         }
         _ => None,
     };
@@ -81,8 +80,7 @@ pub async fn update_server(
     // 如果提供了新凭证,重新加密;否则保留原值
     let credential_enc = if let Some(cred) = &input.credential {
         if !cred.is_empty() {
-            let vault = state.require_vault()?;
-            Some(vault.encrypt_str(cred)?)
+            Some(state.seal_secret(cred).await?)
         } else {
             None
         }
@@ -150,13 +148,12 @@ pub async fn connect_server(state: State<'_, AppState>, id: i64) -> AppResult<St
         return Ok(server.host_key_fingerprint.unwrap_or_default());
     }
 
-    // 解密凭证
-    let vault = state.require_vault()?;
+    // 解密凭证(Vault 未启用时为本地明文,无需解锁)
     let credential = server
         .credential_enc
         .as_ref()
         .ok_or_else(|| AppError::Vault(format!("服务器 {} 未设置凭证", server.name)))?;
-    let credential_plain = vault.decrypt_str(credential)?;
+    let credential_plain = state.open_secret(credential).await?;
 
     let port = server.port as u16;
     match server.auth_method.as_str() {

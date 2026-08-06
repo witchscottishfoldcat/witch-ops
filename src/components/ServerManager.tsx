@@ -6,7 +6,7 @@ import { Server, Plus, Terminal, Power, Tag, Trash2, Eye, EyeOff, X, Lock, KeyRo
 export const ServerManager: React.FC = () => {
   const {
     servers, connectedServerIds, connectServer, disconnectServer,
-    openTerminal, addServer, deleteServer, setActiveServerId, activeServerId, isVaultUnlocked
+    openTerminal, addServer, deleteServer, setActiveServerId, activeServerId, isVaultUnlocked, isVaultInitialized
   } = useApp();
 
   const [selectedTag, setSelectedTag] = useState<string>('all');
@@ -210,7 +210,8 @@ export const ServerManager: React.FC = () => {
             </div>
 
             <form onSubmit={handleAddSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {!isVaultUnlocked && (
+              {/* 已启用但锁定:保存会失败,强提示 */}
+              {isVaultInitialized && !isVaultUnlocked && (
                 <div
                   style={{
                     display: 'flex',
@@ -225,7 +226,26 @@ export const ServerManager: React.FC = () => {
                   }}
                 >
                   <Lock size={14} />
-                  <span>Vault 未解锁，保存凭证需要先解锁。请先到设置页解锁 Vault。</span>
+                  <span>Vault 已锁定,保存凭证需要先解锁。请先到设置页解锁 Vault。</span>
+                </div>
+              )}
+              {/* 未启用:弱提示存储方式 */}
+              {!isVaultInitialized && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    background: 'rgba(128, 128, 128, 0.08)',
+                    border: '1px solid var(--apple-border)',
+                    color: 'var(--apple-text-muted)',
+                    fontSize: 11,
+                  }}
+                >
+                  <Lock size={12} />
+                  <span>Vault 未启用:凭证将以明文保存在项目 data 目录(可在设置中启用加密)。</span>
                 </div>
               )}
 

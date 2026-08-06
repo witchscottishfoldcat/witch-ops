@@ -62,8 +62,11 @@ export const VaultModal: React.FC = () => {
             <Key size={20} />
           </div>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>首次使用 — 设置 Vault 主密码</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>主密码用于派生密钥加密所有敏感数据(SSH 密码、私钥、API Key)。<strong>请务必牢记,忘记将无法找回。</strong></div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>Vault 凭证库未启用(可选)</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              当前 SSH 密码 / API Key 以明文保存在项目 data 目录,所有功能可直接使用,无需解锁。
+              启用后将用主密码派生密钥加密全部敏感数据(AES-GCM-256),此后每次启动需解锁。<strong>请务必牢记主密码,忘记将无法找回。</strong>
+            </div>
           </div>
         </div>
 
@@ -77,7 +80,6 @@ export const VaultModal: React.FC = () => {
               value={pass}
               onChange={e => { setPass(e.target.value); setErrorMsg(''); }}
               style={{ paddingLeft: 30 }}
-              autoFocus
             />
           </div>
           <div style={{ position: 'relative' }}>
@@ -92,7 +94,7 @@ export const VaultModal: React.FC = () => {
             />
           </div>
           <button type="submit" className="btn btn-primary" disabled={busy} style={{ alignSelf: 'flex-start' }}>
-            <ShieldCheck size={14} /> {busy ? '正在初始化...' : '创建并解锁 Vault'}
+            <ShieldCheck size={14} /> {busy ? '正在启用...' : '启用 Vault 加密'}
           </button>
         </form>
         {errorMsg && <div style={{ color: 'var(--accent-rose)', fontSize: 12, marginTop: 8 }}>{errorMsg}</div>}

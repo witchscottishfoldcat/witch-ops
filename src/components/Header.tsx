@@ -8,7 +8,7 @@ const appWindow = getCurrentWindow();
 
 export const Header: React.FC = () => {
   const {
-    isVaultUnlocked, lockVault, servers, activeServerId, setActiveServerId,
+    isVaultUnlocked, isVaultInitialized, lockVault, servers, activeServerId, setActiveServerId,
     connectedServerIds, setActiveView, theme, setTheme
   } = useApp();
 
@@ -112,15 +112,21 @@ export const Header: React.FC = () => {
           <span>PTY Stream</span>
         </button>
 
-        {/* Vault Unlock Badge Button */}
+        {/* Vault 状态徽标:未启用(灰)/ 已解锁(绿)/ 已锁定(红) */}
         <button
-          className={`btn ${isVaultUnlocked ? 'btn-success' : 'btn-danger'}`}
+          className={`btn ${!isVaultInitialized ? 'btn-secondary' : isVaultUnlocked ? 'btn-success' : 'btn-danger'}`}
           onClick={() => isVaultUnlocked ? lockVault() : setActiveView('settings')}
           style={{ height: 30, fontSize: 12 }}
-          title={isVaultUnlocked ? 'Vault 已解锁 (AES-GCM-256)' : 'Vault 已锁定，点击前往解锁'}
+          title={
+            !isVaultInitialized
+              ? 'Vault 未启用:敏感数据明文存于项目 data 目录,可在设置中启用加密'
+              : isVaultUnlocked
+                ? 'Vault 已解锁 (AES-GCM-256)'
+                : 'Vault 已锁定,点击前往解锁'
+          }
         >
           {isVaultUnlocked ? <Unlock size={13} /> : <Lock size={13} />}
-          <span>{isVaultUnlocked ? 'Vault 解锁' : 'Vault 锁定'}</span>
+          <span>{!isVaultInitialized ? 'Vault 未启用' : isVaultUnlocked ? 'Vault 解锁' : 'Vault 锁定'}</span>
         </button>
       </div>
     </header>

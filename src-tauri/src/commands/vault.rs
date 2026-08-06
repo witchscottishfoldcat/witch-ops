@@ -13,6 +13,7 @@ pub async fn vault_is_initialized(state: State<'_, AppState>) -> AppResult<bool>
 }
 
 /// 初始化 Vault(设置主密码)。首次使用时调用。
+/// 启用后自动把此前明文存储的凭证全部加密(plain: → enc:v1:)。
 #[tauri::command]
 pub async fn vault_setup(
     state: State<'_, AppState>,
@@ -25,7 +26,66 @@ pub async fn vault_setup(
     }
     let vault = Vault::setup(&master_password, state.db()).await?;
     state.set_vault(vault).await;
+
+    // 迁移:启用前以明文存的凭证 → 加密
+    migrate_plaintext_secrets(&state).await;
+
     Ok(())
+}
+
+/// 把各表里的 plain: 前缀敏感值重新加密为 enc:v1:
+async fn migrate_plaintext_secrets(state: &AppState) {
+    use sqlx::Row;
+    let vault = match state.vault().await {
+        Some(v) => v,
+        None => return,
+    };
+
+    // (表名, 主键列, 敏感列, 主键是否字符串)
+    let targets: [(&str, &str, &str, bool); 2] = [
+        ("servers", "id", "credential_enc", false),
+        ("agent_providers", "id", "api_key_enc", true),
+    ];
+
+    for (table, pk, col, pk_is_str) in targets {
+        let sql = format!("SELECT {pk}, {col} FROM {table} WHERE {col} LIKE 'plain:%'");
+        let rows = match sqlx::query(&sql).fetch_all(state.db()).await {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("迁移明文凭证:查询 {table} 失败: {e}");
+                continue;
+            }
+        };
+        let mut migrated = 0u32;
+        for row in rows {
+            let stored: String = match row.try_get(col) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let plain = match stored.strip_prefix(crate::PLAIN_PREFIX) {
+                Some(p) => p,
+                None => continue,
+            };
+            let enc = match vault.encrypt_str(plain) {
+                Ok(e) => format!("{}{}", crate::ENC_PREFIX, e),
+                Err(_) => continue,
+            };
+            let update = format!("UPDATE {table} SET {col} = ? WHERE {pk} = ?");
+            let result = if pk_is_str {
+                let id: String = row.try_get(pk).unwrap_or_default();
+                sqlx::query(&update).bind(&enc).bind(id).execute(state.db()).await
+            } else {
+                let id: i64 = row.try_get(pk).unwrap_or_default();
+                sqlx::query(&update).bind(&enc).bind(id).execute(state.db()).await
+            };
+            if result.is_ok() {
+                migrated += 1;
+            }
+        }
+        if migrated > 0 {
+            log::info!("Vault 启用迁移:{table}.{col} 加密了 {migrated} 条明文凭证");
+        }
+    }
 }
 
 /// 解锁 Vault

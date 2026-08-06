@@ -23,7 +23,7 @@ use sqlx::SqlitePool;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
-use crate::error::AppError;
+use crate::error::{AppError, AppResult};
 use crate::ssh::SshManager;
 use crate::vault::Vault;
 
@@ -79,7 +79,58 @@ impl AppState {
     pub fn db(&self) -> &SqlitePool {
         &self.db
     }
+
+    // ==================== 敏感数据加解密封面 ====================
+    //
+    // 存储格式(自描述前缀,兼容各时代数据):
+    //   "enc:v1:<base64>"  → Vault 密文(读取需已解锁)
+    //   "plain:<原文>"     → Vault 未启用时的本地明文
+    //   无前缀(历史数据)   → 已解锁则尝试按密文解,失败按明文;锁定则报错
+
+    /// Vault 是否已初始化(用户是否启用过)
+    pub async fn vault_initialized(&self) -> bool {
+        Vault::is_initialized(&self.db).await.unwrap_or(false)
+    }
+
+    /// 加密敏感值:已解锁 → enc 密文;未启用 → plain 明文;已启用但锁定 → 拒绝
+    pub async fn seal_secret(&self, plaintext: &str) -> AppResult<String> {
+        if let Some(vault) = self.vault().await {
+            return Ok(format!("{}{}", ENC_PREFIX, vault.encrypt_str(plaintext)?));
+        }
+        if self.vault_initialized().await {
+            return Err(AppError::Vault("凭证库已锁定,请先解锁再保存".into()));
+        }
+        Ok(format!("{PLAIN_PREFIX}{plaintext}"))
+    }
+
+    /// 解密敏感值:按前缀分派,兼容无前缀的历史数据
+    pub async fn open_secret(&self, stored: &str) -> AppResult<String> {
+        if let Some(ct) = stored.strip_prefix(ENC_PREFIX) {
+            let vault = self.require_vault_arc().await?;
+            return vault.decrypt_str(ct);
+        }
+        if let Some(p) = stored.strip_prefix(PLAIN_PREFIX) {
+            return Ok(p.to_string());
+        }
+        // 历史无前缀数据
+        if let Some(vault) = self.vault().await {
+            // 有锁时代的密文:尝试解密;失败说明是更早的明文残留
+            if let Ok(plain) = vault.decrypt_str(stored) {
+                return Ok(plain);
+            }
+            return Ok(stored.to_string());
+        }
+        if self.vault_initialized().await {
+            return Err(AppError::Vault("凭证库已锁定,请先解锁".into()));
+        }
+        Ok(stored.to_string())
+    }
 }
+
+/// 密文前缀(Vault 加密值)
+pub const ENC_PREFIX: &str = "enc:v1:";
+/// 明文前缀(Vault 未启用时的本地存储)
+pub const PLAIN_PREFIX: &str = "plain:";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -92,11 +143,39 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // 确定 app data 目录
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("无法获取 app data 目录");
+            // 数据目录:项目文件夹内(随项目走,可迁移/可备份)
+            // 优先级:WITCHCAT_DATA_DIR 环境变量 > 项目根目录/data
+            // (CARGO_MANIFEST_DIR 在编译期确定 = src-tauri,其父目录即项目根)
+            let data_dir = std::env::var("WITCHCAT_DATA_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                    manifest
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or(manifest)
+                        .join("data")
+                });
+            std::fs::create_dir_all(&data_dir)
+                .expect("无法创建项目数据目录");
+
+            // 旧位置(%APPDATA%/com.witchcat.ops)数据迁移:项目内无库而旧库存在 → 整体搬过来
+            let new_db = data_dir.join("app.db");
+            if !new_db.exists() {
+                if let Ok(old_dir) = app.path().app_data_dir() {
+                    let old_db = old_dir.join("app.db");
+                    if old_db.exists() {
+                        for suffix in ["", "-wal", "-shm"] {
+                            let from = old_dir.join(format!("app.db{suffix}"));
+                            let to = data_dir.join(format!("app.db{suffix}"));
+                            if from.exists() {
+                                let _ = std::fs::copy(&from, &to);
+                            }
+                        }
+                        log::info!("已从旧位置迁移数据库: {} → {}", old_db.display(), new_db.display());
+                    }
+                }
+            }
 
             log::info!("数据目录: {}", data_dir.display());
 

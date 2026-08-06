@@ -12,26 +12,16 @@ use crate::AppState;
 /// 列出所有 provider(api_key 返回解密后的明文,供前端使用)
 #[tauri::command]
 pub async fn list_providers(state: State<'_, AppState>) -> AppResult<Vec<AgentProvider>> {
-    let vault = state.vault().await;
     let mut providers =
         sqlx::query_as::<_, AgentProvider>("SELECT * FROM agent_providers ORDER BY name")
             .fetch_all(state.db())
             .await?;
 
-    // 若 vault 已解锁,解密 api_key 放到字段里供前端用
-    // 注意:AgentProvider.api_key_enc 在 schema 是密文;
-    // 这里约定:若已解锁,把解密后的明文放回该字段;否则返回掩码
-    if let Some(vault) = vault {
-        for p in providers.iter_mut() {
-            if let Ok(plain) = vault.decrypt_str(&p.api_key_enc) {
-                p.api_key_enc = plain;
-            } else {
-                p.api_key_enc = "***".into();
-            }
-        }
-    } else {
-        for p in providers.iter_mut() {
-            p.api_key_enc = "***".into();
+    // 能解就出明文(已解锁或明文存储);解不出(锁定中)出掩码
+    for p in providers.iter_mut() {
+        match state.open_secret(&p.api_key_enc).await {
+            Ok(plain) => p.api_key_enc = plain,
+            Err(_) => p.api_key_enc = "***".into(),
         }
     }
     Ok(providers)
@@ -47,14 +37,9 @@ pub async fn get_provider(state: State<'_, AppState>, id: String) -> AppResult<A
             .await?
             .ok_or_else(|| AppError::NotFound(format!("provider {id}")))?;
 
-    if let Some(vault) = state.vault().await {
-        if let Ok(plain) = vault.decrypt_str(&provider.api_key_enc) {
-            provider.api_key_enc = plain;
-        } else {
-            provider.api_key_enc = "***".into();
-        }
-    } else {
-        provider.api_key_enc = "***".into();
+    match state.open_secret(&provider.api_key_enc).await {
+        Ok(plain) => provider.api_key_enc = plain,
+        Err(_) => provider.api_key_enc = "***".into(),
     }
     Ok(provider)
 }
@@ -67,8 +52,7 @@ pub async fn create_provider(
 ) -> AppResult<String> {
     validate_provider_input(&input)?;
 
-    let vault = state.require_vault_arc().await?;
-    let api_key_enc = vault.encrypt_str(&input.api_key)?;
+    let api_key_enc = state.seal_secret(&input.api_key).await?;
     let models_json = input
         .models
         .as_ref()
@@ -100,8 +84,7 @@ pub async fn update_provider(
 ) -> AppResult<()> {
     validate_provider_input(&input)?;
 
-    let vault = state.require_vault_arc().await?;
-    let api_key_enc = vault.encrypt_str(&input.api_key)?;
+    let api_key_enc = state.seal_secret(&input.api_key).await?;
     let models_json = input
         .models
         .as_ref()

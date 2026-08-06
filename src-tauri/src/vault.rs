@@ -101,44 +101,39 @@ impl Vault {
             .map_err(|_| AppError::Crypto("salt 解码失败".into()))?;
         let kek = derive_kek(master_password, &salt);
 
-        // 优先从 keychain 取 data key(明文),失败则从 wrapped 解包
-        let data_key = match load_from_keychain(KEYCHAIN_DATA_KEY_USER) {
-            Ok(b64) => {
-                let mut key = [0u8; DATA_KEY_LEN];
-                let decoded = base64::engine::general_purpose::STANDARD.decode(&b64)
-                    .map_err(|_| AppError::Crypto("data key 解码失败".into()))?;
-                if decoded.len() != DATA_KEY_LEN {
-                    return Err(AppError::Crypto("data key 长度异常".into()));
-                }
-                key.copy_from_slice(&decoded);
+        // 密码证明(强制):必须用主密码派生的 kek 解包 wrapped data key。
+        // 密码错误 → AES-GCM tag 校验失败 → 拒绝解锁。
+        // 绝不能走"keychain 直接取明文 data key"的捷径——那不校验密码,任何密码都能解锁。
+        let wrapped = metadata.wrapped_data_key
+            .ok_or_else(|| AppError::Vault("缺少 wrapped data key,Vault 数据不完整".into()))?;
+        let wrapped_ct = base64::engine::general_purpose::STANDARD.decode(&wrapped)
+            .map_err(|_| AppError::Crypto("wrapped key 解码失败".into()))?;
+        let plaintext = open(&kek, &wrapped_ct)
+            .map_err(|_| AppError::Vault("主密码错误,无法解密 Vault 数据 key".into()))?;
+        if plaintext.len() != DATA_KEY_LEN {
+            return Err(AppError::Crypto("解包后的 data key 长度异常".into()));
+        }
+        let mut key = [0u8; DATA_KEY_LEN];
+        key.copy_from_slice(&plaintext);
 
-                // 校验:用 data key 解密 verifier,成功才算对
-                let verifier_ct = base64::engine::general_purpose::STANDARD
-                    .decode(&metadata.verifier)
-                    .map_err(|_| AppError::Crypto("verifier 解码失败".into()))?;
-                open(&key, &verifier_ct)
-                    .map_err(|_| AppError::Vault("主密码错误".into()))?;
-                key
-            }
-            Err(_) => {
-                // keychain 不可用,从 wrapped 解包(用主密码派生的 kek)
-                let wrapped = metadata.wrapped_data_key
-                    .ok_or_else(|| AppError::Vault("缺少 wrapped data key,且 keychain 不可用".into()))?;
-                let wrapped_ct = base64::engine::general_purpose::STANDARD.decode(&wrapped)
-                    .map_err(|_| AppError::Crypto("wrapped key 解码失败".into()))?;
-                let plaintext = open(&kek, &wrapped_ct)
-                    .map_err(|_| AppError::Vault("主密码错误".into()))?;
-                if plaintext.len() != DATA_KEY_LEN {
-                    return Err(AppError::Crypto("解包后的 data key 长度异常".into()));
-                }
-                let mut key = [0u8; DATA_KEY_LEN];
-                key.copy_from_slice(&plaintext);
-                key
-            }
-        };
+        // 二次校验:data key 必须能解密 verifier 且明文正确(防数据损坏)
+        let verifier_ct = base64::engine::general_purpose::STANDARD
+            .decode(&metadata.verifier)
+            .map_err(|_| AppError::Crypto("verifier 解码失败".into()))?;
+        let verifier_pt = open(&key, &verifier_ct)
+            .map_err(|_| AppError::Vault("Vault 数据损坏(verifier 校验失败)".into()))?;
+        if verifier_pt != VERIFIER_PLAINTEXT {
+            return Err(AppError::Vault("Vault 数据损坏(verifier 内容不符)".into()));
+        }
+
+        // 把 data key 写回 keychain 作备份(尽力而为;keychain 永不作为认证依据)
+        let _ = save_to_keychain(
+            KEYCHAIN_DATA_KEY_USER,
+            &base64::engine::general_purpose::STANDARD.encode(key),
+        );
 
         log::info!("Vault 已解锁");
-        Ok(Vault { data_key })
+        Ok(Vault { data_key: key })
     }
 
     /// 判断是否已初始化
