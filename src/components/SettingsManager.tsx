@@ -1,13 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { ProviderInput } from '../types/backend';
-import { Settings, Plus, Eye, EyeOff, Trash2, Cpu } from 'lucide-react';
+import { Settings, Plus, Eye, EyeOff, Trash2, Cpu, Lock } from 'lucide-react';
 import { VaultModal } from './VaultModal';
 
+/** 安全 JSON 解析:渲染期非法 JSON 返回 null,避免白屏 */
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
+
 export const SettingsManager: React.FC = () => {
-  const { providers, addProvider, deleteProvider, isVaultUnlocked } = useApp();
+  const { providers, addProvider, deleteProvider, isVaultUnlocked, isVaultInitialized } = useApp();
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [showModal, setShowModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // 两步确认:3 秒后自动复位
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const t = setTimeout(() => setConfirmDeleteId(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDeleteId]);
 
   const [formData, setFormData] = useState<ProviderInput>({
     name: '',
@@ -21,12 +36,19 @@ export const SettingsManager: React.FC = () => {
     setShowKey(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.base_url || !formData.api_key) return;
-    addProvider(formData);
-    setShowModal(false);
-    setFormData({ name: '', base_url: '', api_key: '', default_model: 'deepseek-chat', models: ['deepseek-chat'] });
+    setSaving(true);
+    try {
+      await addProvider(formData);
+      setShowModal(false);
+      setFormData({ name: '', base_url: '', api_key: '', default_model: 'deepseek-chat', models: ['deepseek-chat'] });
+    } catch {
+      // 保存失败时保留弹窗和表单数据,错误已由 context toast 提示
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -57,8 +79,9 @@ export const SettingsManager: React.FC = () => {
       {/* Providers Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
         {providers.map(p => {
-          const models: string[] = p.models ? JSON.parse(p.models) : [];
+          const models: string[] = safeParse<string[]>(p.models) ?? [];
           const isKeyVisible = showKey[p.id];
+          const confirming = confirmDeleteId === p.id;
 
           return (
             <div key={p.id} className="glass-card" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -71,11 +94,23 @@ export const SettingsManager: React.FC = () => {
                 </div>
                 <button
                   className="btn btn-secondary"
-                  style={{ padding: 6, color: 'var(--accent-rose)' }}
-                  onClick={() => deleteProvider(p.id)}
-                  title="删除 Provider"
+                  style={{
+                    padding: 6,
+                    color: confirming ? '#fff' : 'var(--accent-rose)',
+                    background: confirming ? 'var(--accent-rose)' : undefined,
+                    borderColor: confirming ? 'var(--accent-rose)' : undefined,
+                  }}
+                  onClick={() => {
+                    if (confirming) {
+                      setConfirmDeleteId(null);
+                      deleteProvider(p.id);
+                    } else {
+                      setConfirmDeleteId(p.id);
+                    }
+                  }}
+                  title={confirming ? '再次点击确认删除' : '删除 Provider'}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={14} /> {confirming ? '确认删除?' : ''}
                 </button>
               </div>
 
@@ -115,6 +150,25 @@ export const SettingsManager: React.FC = () => {
           <div className="modal-content">
             <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>添加 LLM Provider 服务商</h3>
             <form onSubmit={handleAddSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Vault 已启用但锁定:保存 API Key 会失败,强提示 */}
+              {isVaultInitialized && !isVaultUnlocked && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    background: 'rgba(255, 159, 10, 0.1)',
+                    border: '1px solid rgba(255, 159, 10, 0.2)',
+                    color: 'var(--apple-yellow)',
+                    fontSize: 12,
+                  }}
+                >
+                  <Lock size={14} />
+                  <span>请先解锁 Vault 才能保存 API key</span>
+                </div>
+              )}
               <div>
                 <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>服务商名称</label>
                 <input
@@ -159,8 +213,8 @@ export const SettingsManager: React.FC = () => {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>
-                <button type="submit" className="btn btn-primary">保存 Provider</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)} disabled={saving}>取消</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? '保存中…' : '保存 Provider'}</button>
               </div>
             </form>
           </div>

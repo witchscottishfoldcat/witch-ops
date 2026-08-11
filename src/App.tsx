@@ -16,6 +16,7 @@ import { ContainersManager } from './components/ContainersManager';
 import { ServicesManager } from './components/ServicesManager';
 import { SettingsManager } from './components/SettingsManager';
 import { ErrorToast } from './components/ErrorToast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './App.css';
 
 const MainContent: React.FC = () => {
@@ -24,18 +25,20 @@ const MainContent: React.FC = () => {
   return (
     <main className="content-area">
       <ErrorToast />
-      {activeView === 'servers' && <ServerManager />}
-      {activeView === 'terminal' && <TerminalView />}
-      {activeView === 'agent' && <AgentCopilot />}
-      {activeView === 'audit' && <AuditLogs />}
-      {activeView === 'skills' && <SkillsManager />}
-      {activeView === 'quick_actions' && <QuickActions />}
-      {activeView === 'docs' && <DocsHub />}
-      {activeView === 'sftp' && <SftpBrowser />}
-      {activeView === 'metrics' && <MetricsDashboard />}
-      {activeView === 'containers' && <ContainersManager />}
-      {activeView === 'services' && <ServicesManager />}
-      {activeView === 'settings' && <SettingsManager />}
+      <ErrorBoundary>
+        {activeView === 'servers' && <ServerManager />}
+        {activeView === 'terminal' && <TerminalView />}
+        {activeView === 'agent' && <AgentCopilot />}
+        {activeView === 'audit' && <AuditLogs />}
+        {activeView === 'skills' && <SkillsManager />}
+        {activeView === 'quick_actions' && <QuickActions />}
+        {activeView === 'docs' && <DocsHub />}
+        {activeView === 'sftp' && <SftpBrowser />}
+        {activeView === 'metrics' && <MetricsDashboard />}
+        {activeView === 'containers' && <ContainersManager />}
+        {activeView === 'services' && <ServicesManager />}
+        {activeView === 'settings' && <SettingsManager />}
+      </ErrorBoundary>
     </main>
   );
 };

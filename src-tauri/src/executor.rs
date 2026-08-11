@@ -87,7 +87,7 @@ pub async fn execute_and_audit(
     let result = ssh.run_command(server_id, command).await;
     let duration_ms = start.elapsed().as_millis() as i64;
 
-    let (success, exit_code, output, truncated_output) = match &result {
+    let (success, exit_code, _output, truncated_output) = match &result {
         Ok(r) => {
             let combined = r.combined_output();
             let truncated = truncate_output(&combined);
@@ -98,7 +98,7 @@ pub async fn execute_and_audit(
 
     // 写审计日志
     let timestamp = Utc::now().to_rfc3339();
-    let audit_id = write_audit_log(
+    let audit_id = match write_audit_log(
         db,
         &timestamp,
         ctx.session_id.as_deref(),
@@ -115,7 +115,18 @@ pub async fn execute_and_audit(
         ctx.proposal_id.as_deref(),
         duration_ms,
     )
-    .await?;
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            // 审计失败不应吞掉已执行的命令结果:
+            // 命令确实执行了,降级返回结果并显式告警(审计缺口可查)
+            log::error!(
+                "审计日志写入失败(命令已执行,server={server_id}): {e}"
+            );
+            -1
+        }
+    };
 
     let result = result?;
     Ok((result, audit_id))
@@ -218,4 +229,40 @@ async fn write_audit_log(
 
     let id: i64 = row.try_get("id")?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_short_output_unchanged() {
+        let s = "hello world";
+        assert_eq!(truncate_output(s), s);
+    }
+
+    #[test]
+    fn truncate_long_output_appends_note() {
+        let s = "x".repeat(3000);
+        let t = truncate_output(&s);
+        assert!(t.len() < s.len());
+        assert!(t.ends_with("...(输出已截断,共 3000 字符)"), "尾部注释: {t}");
+    }
+
+    #[test]
+    fn truncate_never_cuts_multibyte_utf8() {
+        // 中文 3 字节/字符,构造恰好跨越截断边界的长字符串
+        let s = "运维自动化运维自动化".repeat(200);
+        assert!(s.len() > OUTPUT_TRUNCATE);
+        let t = truncate_output(&s);
+        // 结果必须是合法 UTF-8(截断按字符边界回退,不得 panic/产生非法字节)
+        assert!(String::from_utf8(t.clone().into_bytes()).is_ok());
+        assert!(t.contains("...(输出已截断"));
+    }
+
+    #[test]
+    fn truncate_exact_boundary_ok() {
+        let s = "y".repeat(OUTPUT_TRUNCATE);
+        assert_eq!(truncate_output(&s), s);
+    }
 }

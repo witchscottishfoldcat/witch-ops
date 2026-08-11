@@ -20,13 +20,6 @@ pub async fn query_audit_logs(
     filter: AuditFilter,
 ) -> AppResult<Vec<AuditLog>> {
     // 动态拼 SQL(sqlx 运行时模式,参数化绑定)
-    let mut where_clauses: Vec<String> = Vec::new();
-    let mut binds: Vec<String> = Vec::new();
-    let mut idx = 1;
-
-    // 用 JSON 数组记录绑定值的类型,再逐个绑定(此处简化:全部按 String 绑定,sqlx 会处理类型)
-    // 为避免类型复杂性,这里用一个辅助宏式写法
-
     let sql = build_audit_query(&filter);
     let mut q = sqlx::query_as::<_, AuditLog>(&sql);
 
@@ -43,7 +36,10 @@ pub async fn query_audit_logs(
         q = q.bind(v);
     }
     if let Some(v) = &filter.search {
-        q = q.bind(format!("%{v}%"));
+        // search 子句含 3 个占位符(command/tool_name/output),必须绑定 3 次
+        // (用 owned String 逐次绑定,避免借用生命周期问题)
+        let like = format!("%{v}%");
+        q = q.bind(like.clone()).bind(like.clone()).bind(like);
     }
     if let Some(v) = &filter.from {
         q = q.bind(v);
@@ -54,7 +50,6 @@ pub async fn query_audit_logs(
     q = q.bind(filter.limit);
     q = q.bind(filter.offset);
 
-    let _ = (where_clauses, binds, idx); // 占位避免未使用警告
     let logs = q.fetch_all(state.db()).await?;
     Ok(logs)
 }

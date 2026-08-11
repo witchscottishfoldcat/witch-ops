@@ -165,15 +165,19 @@ interface TermBuffer {
   chunks: Uint8Array[];       // 缓冲的输出
   writer: ((bytes: Uint8Array) => void) | null; // xterm 写入函数
   unlisten: UnlistenFn | null;
+  unlistenExit: UnlistenFn | null;
   exited: number | null;      // 退出码(-1=断开)
 }
 
 const termBuffers = new Map<string, TermBuffer>();
 
+/** 缓冲上限:attach 前最多缓存 256KB,超出丢弃最旧数据(防持续大流量输出撑爆内存) */
+const MAX_BUFFER_BYTES = 256 * 1024;
+
 /** 在开 PTY 前调用:注册监听,开始缓冲输出 */
 export async function beginTerminalBuffer(terminalId: string): Promise<void> {
   if (termBuffers.has(terminalId)) return;
-  const buf: TermBuffer = { chunks: [], writer: null, unlisten: null, exited: null };
+  const buf: TermBuffer = { chunks: [], writer: null, unlisten: null, unlistenExit: null, exited: null };
   let received = 0;
 
   // 输出事件:有 writer 就直接写,否则进缓冲
@@ -186,13 +190,22 @@ export async function beginTerminalBuffer(terminalId: string): Promise<void> {
     if (buf.writer) {
       buf.writer(bytes);
     } else {
+      // 有界缓冲:超限丢弃最旧数据
       buf.chunks.push(bytes);
+      let total = 0;
+      for (let i = buf.chunks.length - 1; i >= 0; i--) {
+        total += buf.chunks[i].length;
+        if (total > MAX_BUFFER_BYTES) {
+          buf.chunks.splice(0, i); // 保留最新部分
+          break;
+        }
+      }
     }
   });
   frontendLog(`beginTerminalBuffer 监听已注册 id=${terminalId.slice(0, 16)}`);
 
-  // 退出事件:记录退出码
-  await listen<{ code: number }>(`terminal_exit_${terminalId}`, (e) => {
+  // 退出事件:记录退出码(监听器必须在 dispose 时取消,否则每个终端泄漏一个监听)
+  buf.unlistenExit = await listen<{ code: number }>(`terminal_exit_${terminalId}`, (e) => {
     buf.exited = e.payload.code;
     frontendLog(`收到退出事件 code=${e.payload.code} id=${terminalId.slice(0, 16)}`);
   });
@@ -229,5 +242,6 @@ export function getTerminalExitCode(terminalId: string): number | null {
 export function disposeTerminalBuffer(terminalId: string): void {
   const buf = termBuffers.get(terminalId);
   buf?.unlisten?.();
+  buf?.unlistenExit?.();
   termBuffers.delete(terminalId);
 }

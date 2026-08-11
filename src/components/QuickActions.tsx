@@ -1,17 +1,39 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { QuickActionStep } from '../types/backend';
-import { Zap, Play, Trash2, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Zap, Play, Trash2, ArrowRight, AlertTriangle, Check, X } from 'lucide-react';
+
+/** 安全解析 JSON 字符串字段,失败返回 null(避免渲染期 JSON.parse 抛异常白屏) */
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
 
 export const QuickActions: React.FC = () => {
-  const { quickActions, runQuickAction, deleteQuickAction, activeServerId, servers } = useApp();
+  const {
+    quickActions, runQuickAction, deleteQuickAction, activeServerId, servers,
+    pendingQuickAction, confirmQuickAction, cancelQuickAction,
+  } = useApp();
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleRun = async (actionId: string) => {
     if (!activeServerId) return;
     setRunningId(actionId);
-    await runQuickAction(actionId, activeServerId);
-    setTimeout(() => setRunningId(null), 800);
+    try {
+      await runQuickAction(actionId, activeServerId);
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  const handleDelete = (id: string) => {
+    if (confirmDeleteId === id) {
+      setConfirmDeleteId(null);
+      deleteQuickAction(id);
+    } else {
+      setConfirmDeleteId(id);
+    }
   };
 
   const currentServer = servers.find(s => s.id === activeServerId);
@@ -35,7 +57,7 @@ export const QuickActions: React.FC = () => {
       {/* Quick Action List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {quickActions.map(action => {
-          const steps: QuickActionStep[] = action.steps ? JSON.parse(action.steps) : [];
+          const steps: QuickActionStep[] = safeParse<QuickActionStep[]>(action.steps) ?? [];
 
           return (
             <div key={action.id} className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -67,6 +89,7 @@ export const QuickActions: React.FC = () => {
                         <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>Step {idx + 1}:</span>
                         <span>{st.value}</span>
                         {st.capture && <span style={{ background: 'rgba(139, 92, 246, 0.2)', color: 'var(--accent-purple)', fontSize: 10, padding: '1px 4px', borderRadius: 3 }}>⇒ {st.capture}</span>}
+                        {st.guard && <span style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--accent-amber)', fontSize: 10, padding: '1px 4px', borderRadius: 3 }}>Guard</span>}
                         {st.confirm && <span style={{ color: 'var(--accent-amber)', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}><AlertTriangle size={10} /> Confirm</span>}
                       </div>
 
@@ -84,7 +107,8 @@ export const QuickActions: React.FC = () => {
                   className="btn btn-primary"
                   style={{ minWidth: 120, justifyContent: 'center' }}
                   onClick={() => handleRun(action.id)}
-                  disabled={runningId === action.id}
+                  disabled={runningId === action.id || !activeServerId}
+                  title={activeServerId ? undefined : '请先选择目标服务器'}
                 >
                   {runningId === action.id ? (
                     <span>执行中...</span>
@@ -96,17 +120,67 @@ export const QuickActions: React.FC = () => {
                 </button>
 
                 <button
-                  className="btn btn-secondary"
+                  className={`btn ${confirmDeleteId === action.id ? 'btn-danger' : 'btn-secondary'}`}
                   style={{ padding: 8, color: 'var(--accent-rose)' }}
-                  onClick={() => deleteQuickAction(action.id)}
+                  onClick={() => handleDelete(action.id)}
+                  title={confirmDeleteId === action.id ? '再次点击确认删除' : '删除'}
                 >
-                  <Trash2 size={14} />
+                  {confirmDeleteId === action.id ? <Check size={14} /> : <Trash2 size={14} />}
                 </button>
               </div>
             </div>
           );
         })}
       </div>
+
+      {/* 快捷指令审批确认弹窗(approval=always_ask 或步骤带 confirm 时触发) */}
+      {pendingQuickAction && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: 560 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ background: 'rgba(245, 158, 11, 0.2)', padding: 10, borderRadius: '50%', color: 'var(--accent-amber)' }}>
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: 16, fontWeight: 700 }}>确认执行快捷指令</h3>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  <strong>{pendingQuickAction.actionName}</strong> → 服务器{' '}
+                  <strong>{pendingQuickAction.serverName}</strong>
+                </p>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: 'var(--text-main)', marginBottom: 12 }}>
+              将依次执行以下 {pendingQuickAction.commands.length} 条命令(均记入审计日志):
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto', marginBottom: 20 }}>
+              {pendingQuickAction.commands.map((c, i) => (
+                <div key={i} style={{
+                  background: '#04060a', border: '1px solid var(--border-color)', borderRadius: 6,
+                  padding: '8px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
+                  color: 'var(--accent-cyan)', wordBreak: 'break-all',
+                }}>
+                  <span style={{ color: 'var(--text-dim)', fontSize: 10, marginRight: 6 }}>#{i + 1}</span>
+                  {c.value}
+                  {c.needsConfirm && (
+                    <span style={{ marginLeft: 8, color: 'var(--accent-amber)', fontSize: 10 }}>⚠ 高危</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button className="btn btn-secondary" onClick={cancelQuickAction}>
+                <X size={14} /> 取消
+              </button>
+              <button className="btn btn-primary" onClick={confirmQuickAction}>
+                <Check size={14} /> 确认执行
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   FolderTree, Folder, FileText, ChevronRight, HardDrive, RefreshCw, X,
@@ -43,6 +43,8 @@ export const SftpBrowser: React.FC = () => {
   const [newDirName, setNewDirName] = useState('');
   // 两步删除:第一次点击进入确认态,3 秒内再点才真删
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  // 请求代际:快速点击不同文件时,丢弃过期响应,防止覆盖编辑内容
+  const fileSeqRef = useRef(0);
 
   const currentServer = servers.find(s => s.id === activeServerId);
   const pathParts = sftpPath.split('/').filter(Boolean);
@@ -56,13 +58,15 @@ export const SftpBrowser: React.FC = () => {
 
   const openFile = async (fullPath: string, name: string) => {
     setLoadingFile(true);
+    const seq = ++fileSeqRef.current;
     try {
       const content = await readSftpFile(fullPath);
+      if (seq !== fileSeqRef.current) return; // 过期响应,丢弃
       if (content === null) return; // 错误已由全局 toast 提示
       setSelectedFile({ path: fullPath, name });
       setFileContent(content);
     } finally {
-      setLoadingFile(false);
+      if (seq === fileSeqRef.current) setLoadingFile(false);
     }
   };
 
@@ -217,11 +221,11 @@ export const SftpBrowser: React.FC = () => {
               </tr>
             )}
 
-            {sftpFiles.map((item, idx) => {
+            {sftpFiles.map((item) => {
               const fullPath = joinPath(sftpPath, item.name);
               const confirming = confirmDelete === fullPath;
               return (
-                <tr key={idx} style={{ cursor: 'pointer' }} onClick={() => handleItemClick(item)}>
+                <tr key={item.name} style={{ cursor: 'pointer' }} onClick={() => handleItemClick(item)}>
                   <td style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: item.is_dir ? 600 : 400 }}>
                     {item.is_symlink ? (
                       <Link2 size={16} style={{ color: 'var(--accent-purple)' }} />

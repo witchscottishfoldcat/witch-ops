@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { ServerInput } from '../types/backend';
 import { Server, Plus, Terminal, Power, Tag, Trash2, Eye, EyeOff, X, Lock, KeyRound, ShieldCheck, ShieldAlert } from 'lucide-react';
+
+/** 安全 JSON 解析:渲染期非法 JSON 返回 null,避免白屏 */
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
 
 export const ServerManager: React.FC = () => {
   const {
@@ -12,6 +18,15 @@ export const ServerManager: React.FC = () => {
   const [selectedTag, setSelectedTag] = useState<string>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  // 两步确认:3 秒后自动复位
+  useEffect(() => {
+    if (confirmDeleteId === null) return;
+    const t = setTimeout(() => setConfirmDeleteId(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDeleteId]);
 
   const [formData, setFormData] = useState<ServerInput>({
     name: '',
@@ -26,17 +41,24 @@ export const ServerManager: React.FC = () => {
 
   const filteredServers = servers.filter(s => {
     if (selectedTag === 'all') return true;
-    const tagArr: string[] = s.tags ? JSON.parse(s.tags) : [];
+    const tagArr: string[] = safeParse<string[]>(s.tags) ?? [];
     return tagArr.includes(selectedTag);
   });
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.host) return;
-    addServer(formData);
-    setShowAddModal(false);
-    setShowPassword(false);
-    setFormData({ name: '', host: '', port: 22, username: 'root', auth_method: 'password', credential: '', tags: ['prod'], note: '' });
+    setSaving(true);
+    try {
+      await addServer(formData);
+      setShowAddModal(false);
+      setShowPassword(false);
+      setFormData({ name: '', host: '', port: 22, username: 'root', auth_method: 'password', credential: '', tags: ['prod'], note: '' });
+    } catch {
+      // 保存失败时保留弹窗和表单数据,错误已由 context toast 提示
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeModal = () => {
@@ -88,7 +110,8 @@ export const ServerManager: React.FC = () => {
         {filteredServers.map(s => {
           const isConnected = connectedServerIds.has(s.id);
           const isSelected = activeServerId === s.id;
-          const tags: string[] = s.tags ? JSON.parse(s.tags) : [];
+          const tags: string[] = safeParse<string[]>(s.tags) ?? [];
+          const confirming = confirmDeleteId === s.id;
 
           return (
             <div
@@ -114,11 +137,23 @@ export const ServerManager: React.FC = () => {
 
                 <button
                   className="btn btn-secondary"
-                  style={{ padding: 6, borderRadius: '50%' }}
-                  onClick={() => deleteServer(s.id)}
-                  title="删除服务器"
+                  style={{
+                    padding: 6, borderRadius: '50%',
+                    color: confirming ? '#fff' : undefined,
+                    background: confirming ? 'var(--accent-rose)' : undefined,
+                    borderColor: confirming ? 'var(--accent-rose)' : undefined,
+                  }}
+                  onClick={() => {
+                    if (confirming) {
+                      setConfirmDeleteId(null);
+                      deleteServer(s.id);
+                    } else {
+                      setConfirmDeleteId(s.id);
+                    }
+                  }}
+                  title={confirming ? '再次点击确认删除(含凭证)' : '删除服务器'}
                 >
-                  <Trash2 size={14} style={{ color: 'var(--text-dim)' }} />
+                  <Trash2 size={14} style={{ color: confirming ? '#fff' : 'var(--text-dim)' }} />
                 </button>
               </div>
 
@@ -365,8 +400,8 @@ export const ServerManager: React.FC = () => {
 
               {/* 操作按钮 */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8, paddingTop: 16, borderTop: '1px solid var(--apple-border)' }}>
-                <button type="button" className="btn btn-secondary" onClick={closeModal}>取消</button>
-                <button type="submit" className="btn btn-primary">保存节点</button>
+                <button type="button" className="btn btn-secondary" onClick={closeModal} disabled={saving}>取消</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? '保存中…' : '保存节点'}</button>
               </div>
             </form>
           </div>

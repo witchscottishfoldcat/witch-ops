@@ -1,10 +1,18 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Box, Play, Square, RefreshCw, Trash2 } from 'lucide-react';
 
 export const ContainersManager: React.FC = () => {
   const { containers, controlContainer, activeServerId, servers } = useApp();
   const currentServer = servers.find(s => s.id === activeServerId);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // 两步确认:3 秒后自动复位
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const t = setTimeout(() => setConfirmDeleteId(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDeleteId]);
 
   return (
     <div>
@@ -75,11 +83,23 @@ export const ContainersManager: React.FC = () => {
 
               <button
                 className="btn btn-secondary"
-                style={{ padding: 6, color: 'var(--accent-rose)' }}
-                onClick={() => controlContainer(c.id, 'remove')}
-                title="删除容器"
+                style={{
+                  padding: 6,
+                  color: (confirmDeleteId === c.id) ? '#fff' : 'var(--accent-rose)',
+                  background: (confirmDeleteId === c.id) ? 'var(--accent-rose)' : undefined,
+                  borderColor: (confirmDeleteId === c.id) ? 'var(--accent-rose)' : undefined,
+                }}
+                onClick={() => {
+                  if (confirmDeleteId === c.id) {
+                    setConfirmDeleteId(null);
+                    controlContainer(c.id, 'remove');
+                  } else {
+                    setConfirmDeleteId(c.id);
+                  }
+                }}
+                title={confirmDeleteId === c.id ? '再次点击确认删除' : '删除容器'}
               >
-                <Trash2 size={12} />
+                <Trash2 size={12} /> {confirmDeleteId === c.id ? '确认删除?' : ''}
               </button>
             </div>
           </div>

@@ -183,21 +183,29 @@ export const TerminalView: React.FC = () => {
     }
   }, [activeTab?.id]);
 
-  // 容器尺寸变化(窗口拖动/侧边栏折叠)→ 重新 fit
+  // 容器尺寸变化(窗口拖动/侧边栏折叠)→ 重新 fit(rAF 节流,避免拖窗口时每帧多次 IPC)
   useEffect(() => {
     if (!mountPointRef.current || !activeTab) return;
     const inst = termInstances.get(activeTab.id);
     if (!inst) return;
+    let rafId: number | null = null;
 
     const observer = new ResizeObserver(() => {
-      try {
-        inst.fitAddon.fit();
-        const { cols, rows } = inst.term;
-        ipc.terminalResize(activeTab.id, cols, rows).catch(() => {});
-      } catch {}
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        try {
+          inst.fitAddon.fit();
+          const { cols, rows } = inst.term;
+          ipc.terminalResize(activeTab.id, cols, rows).catch(() => {});
+        } catch {}
+        rafId = null;
+      });
     });
     observer.observe(mountPointRef.current);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [activeTab?.id]);
 
   // 注意:不要在组件卸载时 dispose 实例!

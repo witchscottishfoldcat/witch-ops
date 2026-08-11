@@ -1,12 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Skill } from '../types/backend';
 import { BookOpen, Plus, ToggleLeft, ToggleRight, Edit, Trash2 } from 'lucide-react';
+
+/** 安全 JSON 解析:渲染期非法 JSON 返回 null,避免白屏 */
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
 
 export const SkillsManager: React.FC = () => {
   const { skills, upsertSkill, toggleSkill, deleteSkill } = useApp();
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState('');
+
+  // 两步确认:3 秒后自动复位
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const t = setTimeout(() => setConfirmDeleteId(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDeleteId]);
 
   const handleOpenAdd = () => {
     setEditingSkill({
@@ -27,12 +43,32 @@ export const SkillsManager: React.FC = () => {
     setShowModal(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingSkill) {
-      upsertSkill(editingSkill);
+    if (!editingSkill) return;
+    setSaveError('');
+    // 校验触发词 JSON 数组格式
+    if (editingSkill.triggers) {
+      try { JSON.parse(editingSkill.triggers); } catch {
+        setSaveError('触发词必须是合法的 JSON 数组,例如 ["keyword1","keyword2"]');
+        return;
+      }
+    }
+    if (editingSkill.tags) {
+      try { JSON.parse(editingSkill.tags); } catch {
+        setSaveError('标签必须是合法的 JSON 数组');
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      await upsertSkill(editingSkill);
       setShowModal(false);
       setEditingSkill(null);
+    } catch {
+      // 保存失败时保留弹窗和表单数据,错误已由 context toast 提示
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -55,8 +91,9 @@ export const SkillsManager: React.FC = () => {
       {/* Skills Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
         {skills.map(skill => {
-          const triggers: string[] = skill.triggers ? JSON.parse(skill.triggers) : [];
-          const tags: string[] = skill.tags ? JSON.parse(skill.tags) : [];
+          const triggers: string[] = safeParse<string[]>(skill.triggers) ?? [];
+          const tags: string[] = safeParse<string[]>(skill.tags) ?? [];
+          const confirming = confirmDeleteId === skill.id;
 
           return (
             <div key={skill.id} className="glass-card" style={{ display: 'flex', flexDirection: 'column', opacity: skill.enabled ? 1 : 0.6 }}>
@@ -139,10 +176,22 @@ export const SkillsManager: React.FC = () => {
                   </button>
                   <button
                     className="btn btn-secondary"
-                    style={{ padding: 4, color: 'var(--accent-rose)' }}
-                    onClick={() => deleteSkill(skill.id)}
+                    style={{
+                      padding: 4,
+                      color: confirming ? '#fff' : 'var(--accent-rose)',
+                      background: confirming ? 'var(--accent-rose)' : undefined,
+                      borderColor: confirming ? 'var(--accent-rose)' : undefined,
+                    }}
+                    onClick={() => {
+                      if (confirming) {
+                        setConfirmDeleteId(null);
+                        deleteSkill(skill.id);
+                      } else {
+                        setConfirmDeleteId(skill.id);
+                      }
+                    }}
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={14} /> {confirming ? '确认删除?' : ''}
                   </button>
                 </div>
               </div>
@@ -216,8 +265,9 @@ export const SkillsManager: React.FC = () => {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>
-                <button type="submit" className="btn btn-primary">保存技能</button>
+                {saveError && <div style={{ flex: 1, color: 'var(--accent-rose)', fontSize: 12, alignSelf: 'center' }}>{saveError}</div>}
+                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)} disabled={saving}>取消</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? '保存中…' : '保存技能'}</button>
               </div>
             </form>
           </div>

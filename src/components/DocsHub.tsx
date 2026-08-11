@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Doc } from '../types/backend';
 import { FileCode, Sparkles, BookOpen, CheckCircle, Trash2, Eye, ArrowRight, Flame, FileText, Bot, User, X } from 'lucide-react';
@@ -7,6 +7,14 @@ export const DocsHub: React.FC = () => {
   const { docs, updateDocStatus, deleteDoc, convertDocToSkill } = useApp();
   const [selectedType, setSelectedType] = useState<string>('all');
   const [activeDoc, setActiveDoc] = useState<Doc | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // 两步确认:3 秒后自动复位
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const t = setTimeout(() => setConfirmDeleteId(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDeleteId]);
 
   const filteredDocs = docs.filter(d => {
     if (selectedType === 'all') return true;
@@ -98,7 +106,7 @@ export const DocsHub: React.FC = () => {
               {doc.content}
             </div>
 
-            {/* Actions Bar */}
+              {/* Actions Bar */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
               <button
                 className="btn btn-primary"
@@ -119,8 +127,24 @@ export const DocsHub: React.FC = () => {
                 <button className="btn btn-secondary" style={{ padding: 4 }} onClick={() => setActiveDoc(doc)}>
                   <Eye size={14} />
                 </button>
-                <button className="btn btn-secondary" style={{ padding: 4, color: 'var(--accent-rose)' }} onClick={() => deleteDoc(doc.id)}>
-                  <Trash2 size={14} />
+                <button
+                  className="btn btn-secondary"
+                  style={{
+                    padding: 4,
+                    color: (confirmDeleteId === doc.id) ? '#fff' : 'var(--accent-rose)',
+                    background: (confirmDeleteId === doc.id) ? 'var(--accent-rose)' : undefined,
+                    borderColor: (confirmDeleteId === doc.id) ? 'var(--accent-rose)' : undefined,
+                  }}
+                  onClick={() => {
+                    if (confirmDeleteId === doc.id) {
+                      setConfirmDeleteId(null);
+                      deleteDoc(doc.id);
+                    } else {
+                      setConfirmDeleteId(doc.id);
+                    }
+                  }}
+                >
+                  <Trash2 size={14} /> {(confirmDeleteId === doc.id) ? '确认删除?' : ''}
                 </button>
               </div>
             </div>

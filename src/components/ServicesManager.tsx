@@ -62,7 +62,7 @@ export const ServicesManager: React.FC = () => {
                       </button>
                     )}
                     <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => controlService(svc.name, 'restart')}>
-                      <RefreshCw size={10} /> 重载
+                      <RefreshCw size={10} /> 重启
                     </button>
                   </div>
                 </td>

@@ -79,8 +79,9 @@ export const Header: React.FC = () => {
           <Search size={13} style={{ position: 'absolute', left: 9, top: 9, color: 'var(--apple-text-dim)' }} />
           <input
             className="input-field"
-            placeholder="搜索节点, SOP..."
-            style={{ paddingLeft: 28, fontSize: 12, height: 30 }}
+            placeholder="搜索(开发中)"
+            style={{ paddingLeft: 28, fontSize: 12, height: 30, opacity: 0.5 }}
+            disabled
           />
         </div>
 

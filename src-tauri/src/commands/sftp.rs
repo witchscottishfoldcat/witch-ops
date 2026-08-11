@@ -2,12 +2,70 @@
 //!
 //! 每个命令打开一次 SFTP 子系统会话执行操作。
 //! (实现简单;若需高频操作,可后续优化为复用 session)
+//!
+//! 设计约定:所有**写操作**(write/delete/mkdir/rmdir/rename)必须调用
+//! [`crate::executor::log_action`] 留审计痕迹 —— 与"一切命令皆审计"的统一出口原则一致。
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
+use crate::executor::{log_action, AuditContext};
 use crate::AppState;
+
+/// 查询服务器 host(用于审计记录),失败返回空串
+async fn fetch_server_host(state: &State<'_, AppState>, server_id: i64) -> String {
+    use sqlx::Row;
+    sqlx::query("SELECT host FROM servers WHERE id = ?")
+        .bind(server_id)
+        .fetch_optional(state.db())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.try_get::<String, _>("host").ok())
+        .unwrap_or_default()
+}
+
+/// 写操作执行 + 审计的公共包装:
+/// 无论成功失败都写审计日志;审计写库失败只告警,不吞掉操作结果。
+async fn audit_sftp_action(
+    state: &State<'_, AppState>,
+    server_id: i64,
+    tool_name: &str,
+    args: serde_json::Value,
+    op: impl std::future::Future<Output = AppResult<()>>,
+) -> AppResult<()> {
+    let server_host = fetch_server_host(state, server_id).await;
+    let ctx = AuditContext {
+        source: "sftp".into(),
+        session_id: None,
+        tool_name: tool_name.into(),
+        command: None,
+        args: Some(args.to_string()),
+        approved_by: Some("user".into()),
+        proposal_id: None,
+    };
+
+    let result = op.await;
+    let (success, output) = match &result {
+        Ok(()) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
+    };
+    match log_action(
+        state.db(),
+        Some(server_id),
+        Some(&server_host),
+        success,
+        output.as_deref(),
+        &ctx,
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(e) => log::warn!("SFTP {tool_name} 审计写库失败: {e}"),
+    }
+    result
+}
 
 /// 目录条目
 #[derive(Debug, Clone, Serialize)]
@@ -123,25 +181,29 @@ pub async fn sftp_write_file(
     path: String,
     content: String,
 ) -> AppResult<()> {
-    let sftp = state.ssh.open_sftp(server_id).await?;
+    let args = serde_json::json!({ "path": path });
+    audit_sftp_action(&state, server_id, "write_file", args, async {
+        let sftp = state.ssh.open_sftp(server_id).await?;
 
-    use russh_sftp::protocol::OpenFlags;
-    let mut file = sftp
-        .open_with_flags(
-            &path,
-            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
-        )
-        .await
-        .map_err(|e| AppError::Ssh(format!("打开文件失败: {e}")))?;
+        use russh_sftp::protocol::OpenFlags;
+        let mut file = sftp
+            .open_with_flags(
+                &path,
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+            )
+            .await
+            .map_err(|e| AppError::Ssh(format!("打开文件失败: {e}")))?;
 
-    use tokio::io::AsyncWriteExt;
-    file.write_all(content.as_bytes())
-        .await
-        .map_err(|e| AppError::Ssh(format!("写入失败: {e}")))?;
-    file.flush()
-        .await
-        .map_err(|e| AppError::Ssh(format!("flush 失败: {e}")))?;
-    Ok(())
+        use tokio::io::AsyncWriteExt;
+        file.write_all(content.as_bytes())
+            .await
+            .map_err(|e| AppError::Ssh(format!("写入失败: {e}")))?;
+        file.flush()
+            .await
+            .map_err(|e| AppError::Ssh(format!("flush 失败: {e}")))?;
+        Ok(())
+    })
+    .await
 }
 
 /// 删除文件
@@ -151,11 +213,15 @@ pub async fn sftp_delete_file(
     server_id: i64,
     path: String,
 ) -> AppResult<()> {
-    let sftp = state.ssh.open_sftp(server_id).await?;
-    sftp.remove_file(&path)
-        .await
-        .map_err(|e| AppError::Ssh(format!("删除文件失败: {e}")))?;
-    Ok(())
+    let args = serde_json::json!({ "path": path });
+    audit_sftp_action(&state, server_id, "delete_file", args, async {
+        let sftp = state.ssh.open_sftp(server_id).await?;
+        sftp.remove_file(&path)
+            .await
+            .map_err(|e| AppError::Ssh(format!("删除文件失败: {e}")))?;
+        Ok(())
+    })
+    .await
 }
 
 /// 创建目录
@@ -165,11 +231,15 @@ pub async fn sftp_mkdir(
     server_id: i64,
     path: String,
 ) -> AppResult<()> {
-    let sftp = state.ssh.open_sftp(server_id).await?;
-    sftp.create_dir(&path)
-        .await
-        .map_err(|e| AppError::Ssh(format!("创建目录失败: {e}")))?;
-    Ok(())
+    let args = serde_json::json!({ "path": path });
+    audit_sftp_action(&state, server_id, "mkdir", args, async {
+        let sftp = state.ssh.open_sftp(server_id).await?;
+        sftp.create_dir(&path)
+            .await
+            .map_err(|e| AppError::Ssh(format!("创建目录失败: {e}")))?;
+        Ok(())
+    })
+    .await
 }
 
 /// 删除目录
@@ -179,11 +249,15 @@ pub async fn sftp_rmdir(
     server_id: i64,
     path: String,
 ) -> AppResult<()> {
-    let sftp = state.ssh.open_sftp(server_id).await?;
-    sftp.remove_dir(&path)
-        .await
-        .map_err(|e| AppError::Ssh(format!("删除目录失败: {e}")))?;
-    Ok(())
+    let args = serde_json::json!({ "path": path });
+    audit_sftp_action(&state, server_id, "rmdir", args, async {
+        let sftp = state.ssh.open_sftp(server_id).await?;
+        sftp.remove_dir(&path)
+            .await
+            .map_err(|e| AppError::Ssh(format!("删除目录失败: {e}")))?;
+        Ok(())
+    })
+    .await
 }
 
 /// 重命名
@@ -194,11 +268,15 @@ pub async fn sftp_rename(
     from: String,
     to: String,
 ) -> AppResult<()> {
-    let sftp = state.ssh.open_sftp(server_id).await?;
-    sftp.rename(&from, &to)
-        .await
-        .map_err(|e| AppError::Ssh(format!("重命名失败: {e}")))?;
-    Ok(())
+    let args = serde_json::json!({ "from": from, "to": to });
+    audit_sftp_action(&state, server_id, "rename", args, async {
+        let sftp = state.ssh.open_sftp(server_id).await?;
+        sftp.rename(&from, &to)
+            .await
+            .map_err(|e| AppError::Ssh(format!("重命名失败: {e}")))?;
+        Ok(())
+    })
+    .await
 }
 
 /// 路径信息(规范路径、是否存在)

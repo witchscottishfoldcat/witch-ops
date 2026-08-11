@@ -42,8 +42,8 @@ Witchcat Ops 把"AI Agent 运维"和"人工运维"统一到一台桌面应用里
 
 ### 安全
 
-- **Vault 凭证库** —— 主密码 → PBKDF2(310,000 次)→ 解包数据密钥 → AES-GCM-256 加密所有敏感数据;数据密钥托管于 OS 钥匙串(keyring),不落盘
-- 审计日志全量留存,危险操作可追溯
+- **Vault 凭证库** —— 主密码 → PBKDF2(310,000 次)→ 解包数据密钥 → AES-GCM-256 加密所有敏感数据;数据密钥存于 OS 钥匙串(keyring)并在库内留包装备份(忘记主密码可用钥匙串恢复);Vault 未启用时敏感值以 `plain:` 前缀明文存储(本地单机权衡,建议启用 Vault)
+- 审计日志全量留存,危险操作可追溯;所有命令执行(含 Agent/快捷指令/SFTP 写操作)统一走 `execute_and_audit` / `log_action` 审计出口
 
 ## 界面
 
@@ -82,7 +82,9 @@ powershell -ExecutionPolicy Bypass -File scripts/gen-icon.ps1
 
 本机 WDAC 策略会拦截多数路径下的 cargo 构建脚本(os error 4551),因此 `src-tauri/.cargo/config.toml` 把 `target-dir` 重定向到 `C:/Users/<you>/Documents/witchcat-ops-target`。换机器/换用户时注意调整。
 
-应用数据库:`%APPDATA%/com.witchcat.ops/app.db`(SQLite,启动自动建表)。
+应用数据库:项目根目录 `data/app.db`(SQLite,WAL 模式,启动自动建表 + 版本化迁移)。
+旧版本(`%APPDATA%/com.witchcat.ops/app.db`)的库会在首次启动时自动迁移;
+也可用环境变量 `WITCHCAT_DATA_DIR` 指定数据目录。
 
 ## 项目结构
 

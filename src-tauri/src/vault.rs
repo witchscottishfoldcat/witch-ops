@@ -206,6 +206,13 @@ impl Vault {
         sqlx::query("UPDATE agent_providers SET api_key_enc = '' WHERE api_key_enc != ''")
             .execute(db)
             .await?;
+        // 其余加密列一并清空(防遗漏:任何存过密文的表都必须处理)
+        sqlx::query("UPDATE saved_credentials SET secret_enc = '' WHERE secret_enc != ''")
+            .execute(db)
+            .await?;
+        sqlx::query("UPDATE mcp_servers SET env_enc = NULL WHERE env_enc IS NOT NULL")
+            .execute(db)
+            .await?;
         let _ = delete_from_keychain(KEYCHAIN_DATA_KEY_USER);
         log::warn!("Vault 已彻底重置,所有已存凭证已清空");
         Ok(())

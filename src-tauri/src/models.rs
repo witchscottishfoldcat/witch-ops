@@ -49,16 +49,79 @@ fn default_auth() -> String {
 
 impl ServerInput {
     pub fn validate(&self) -> crate::error::AppResult<()> {
+        use crate::error::AppError;
         if self.name.trim().is_empty() {
-            return Err(crate::error::AppError::InvalidInput("名称不能为空".into()));
+            return Err(AppError::InvalidInput("名称不能为空".into()));
         }
         if self.host.trim().is_empty() {
-            return Err(crate::error::AppError::InvalidInput("主机不能为空".into()));
+            return Err(AppError::InvalidInput("主机不能为空".into()));
         }
         if self.username.trim().is_empty() {
-            return Err(crate::error::AppError::InvalidInput("用户名不能为空".into()));
+            return Err(AppError::InvalidInput("用户名不能为空".into()));
+        }
+        if !(1..=65535).contains(&self.port) {
+            return Err(AppError::InvalidInput(format!(
+                "端口必须在 1-65535 之间,收到: {}",
+                self.port
+            )));
+        }
+        if !matches!(self.auth_method.as_str(), "password" | "private_key") {
+            return Err(AppError::InvalidInput(format!(
+                "不支持的认证方式: {} (允许: password/private_key)",
+                self.auth_method
+            )));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(port: i64, auth: &str) -> ServerInput {
+        ServerInput {
+            name: "测试机".into(),
+            host: "10.0.0.1".into(),
+            port,
+            username: "root".into(),
+            auth_method: auth.into(),
+            credential: None,
+            tags: None,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn valid_input_passes() {
+        assert!(input(22, "password").validate().is_ok());
+        assert!(input(65535, "private_key").validate().is_ok());
+    }
+
+    #[test]
+    fn port_out_of_range_rejected() {
+        assert!(input(0, "password").validate().is_err());
+        assert!(input(-1, "password").validate().is_err());
+        assert!(input(70_000, "password").validate().is_err());
+    }
+
+    #[test]
+    fn auth_method_whitelisted() {
+        assert!(input(22, "ssh-agent").validate().is_err());
+        assert!(input(22, "").validate().is_err());
+    }
+
+    #[test]
+    fn blank_fields_rejected() {
+        let mut v = input(22, "password");
+        v.name = "   ".into();
+        assert!(v.validate().is_err());
+        v.name = "ok".into();
+        v.host = "".into();
+        assert!(v.validate().is_err());
+        v.host = "h".into();
+        v.username = "".into();
+        assert!(v.validate().is_err());
     }
 }
 

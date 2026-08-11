@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Server, ServerInput, AuditLog, AuditFilter, Skill, QuickAction, Doc,
+  Server, ServerInput, AuditLog, AuditFilter, Skill, QuickAction, QuickActionStep, Doc,
   Provider, ProviderInput, Container, ContainerAction, Service, ServerMetrics,
   DirEntry, AuditContext, ExecuteResult
 } from '../types/backend';
@@ -21,6 +21,10 @@ export interface AgentProposal {
   approved?: boolean;
   result?: ExecuteResult;
   safe_to_run?: boolean;
+  /** 原始工具调用(供执行后回填模型上下文) */
+  toolCall?: { id: string; name: string; arguments: Record<string, unknown> };
+  /** 本轮还有多少个工具调用未列出(当前仅支持审批第一个) */
+  droppedToolCalls?: number;
 }
 
 export interface AgentMessage {
@@ -30,6 +34,16 @@ export interface AgentMessage {
   timestamp: string;
   proposal?: AgentProposal;
   streaming?: boolean;
+}
+
+/** 待人工确认的快捷指令执行(审批流) */
+export interface PendingQuickAction {
+  actionId: string;
+  serverId: number;
+  serverName: string;
+  actionName: string;
+  /** 将要执行的命令列表(含是否需要单独确认的标记) */
+  commands: { value: string; needsConfirm: boolean }[];
 }
 
 interface AppContextType {
@@ -59,13 +73,17 @@ interface AppContextType {
   // Host Key
   pendingHostKey: { serverId: number; fingerprint: string } | null;
   confirmHostKey: () => Promise<void>;
-  cancelHostKey: () => void;
+  cancelHostKey: () => Promise<void>;
 
   // Servers
   servers: Server[];
   connectedServerIds: Set<number>;
   refreshServers: () => Promise<void>;
-  connectServer: (id: number) => Promise<void>;
+  /** 连接服务器。返回是否可立即使用:
+   *  - true  已连接(含指纹已确认)
+   *  - false 触发首连指纹确认流程(等待用户确认),或连接失败(错误已 toast)
+   */
+  connectServer: (id: number) => Promise<boolean>;
   disconnectServer: (id: number) => Promise<void>;
   addServer: (input: ServerInput) => Promise<void>;
   updateServer: (id: number, input: ServerInput) => Promise<void>;
@@ -98,6 +116,10 @@ interface AppContextType {
   upsertQuickAction: (action: QuickAction) => Promise<void>;
   deleteQuickAction: (id: string) => Promise<void>;
   runQuickAction: (actionId: string, serverId: number) => Promise<void>;
+  /** 待审批的快捷指令(需要人工确认时非空) */
+  pendingQuickAction: PendingQuickAction | null;
+  confirmQuickAction: () => Promise<void>;
+  cancelQuickAction: () => void;
 
   // Docs
   docs: Doc[];
@@ -166,6 +188,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [sftpPath, setSftpPath] = useState('/');
   const [sftpFiles, setSftpFiles] = useState<DirEntry[]>([]);
   const [sftpError, setSftpError] = useState<string | null>(null);
+  const [pendingQuickAction, setPendingQuickAction] = useState<PendingQuickAction | null>(null);
   const [metrics, setMetrics] = useState<ServerMetrics | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -211,7 +234,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     catch (e) { handleError(e); return false; }
   };
   const lockVault = async () => {
-    try { await ipc.vaultLock(); setIsVaultUnlocked(false); } catch (e) { handleError(e); }
+    try {
+      await ipc.vaultLock();
+      setIsVaultUnlocked(false);
+      // 后端锁定后 providers 返回掩码('***'),刷新前端状态,
+      // 避免界面上残留解密明文 key
+      await refreshProviders();
+    } catch (e) { handleError(e); }
   };
   const recoverVault = async (pass: string) => {
     try { await ipc.vaultRecover(pass); await refreshVaultState(); return true; }
@@ -227,38 +256,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const list = await ipc.listServers();
       setServers(list);
+      // 并行查询连接状态(串行 await 在服务器多时首屏明显变慢)
+      const statuses = await Promise.all(
+        list.map(s => ipc.serverConnectionStatus(s.id).catch(() => false))
+      );
       const connected = new Set<number>();
-      for (const s of list) {
-        if (await ipc.serverConnectionStatus(s.id)) connected.add(s.id);
-      }
+      list.forEach((s, i) => { if (statuses[i]) connected.add(s.id); });
       setConnectedServerIds(connected);
     } catch (e) { handleError(e); }
   }, []);
 
   useEffect(() => { refreshServers(); }, [refreshServers]);
 
-  const connectServer = async (id: number) => {
+  const connectServer = async (id: number): Promise<boolean> => {
     try {
+      // 已连接(且指纹已确认过)→ 直接可用
+      if (connectedServerIds.has(id)) return true;
+
       const fp = await ipc.connectServer(id);
       const s = servers.find(x => x.id === id);
       if (s && !s.host_key_fingerprint && fp) {
+        // 首连:连接已建立但指纹未经用户确认。
+        // 在确认之前绝不把会话标记为可用 —— 拒绝时后端会断开,命令通道始终不可用。
         setPendingHostKey({ serverId: id, fingerprint: fp });
-        return;
+        return false;
       }
       setConnectedServerIds(prev => new Set([...prev, id]));
-    } catch (e) { handleError(e); }
+      return true;
+    } catch (e) {
+      handleError(e);
+      return false;
+    }
   };
 
   const confirmHostKey = async () => {
     if (!pendingHostKey) return;
+    const serverId = pendingHostKey.serverId;
     try {
-      await ipc.confirmHostKey(pendingHostKey.serverId, pendingHostKey.fingerprint);
-      setConnectedServerIds(prev => new Set([...prev, pendingHostKey.serverId]));
+      await ipc.confirmHostKey(serverId, pendingHostKey.fingerprint);
+      setConnectedServerIds(prev => new Set([...prev, serverId]));
       setPendingHostKey(null);
       await refreshServers();
     } catch (e) { handleError(e); }
   };
-  const cancelHostKey = () => setPendingHostKey(null);
+
+  // 用户拒绝指纹确认:必须真正断开后端连接(否则未验证的会话仍可被后续命令使用)
+  const cancelHostKey = async () => {
+    if (!pendingHostKey) return;
+    const serverId = pendingHostKey.serverId;
+    setPendingHostKey(null);
+    try {
+      await ipc.disconnectServer(serverId);
+      setConnectedServerIds(prev => { const n = new Set(prev); n.delete(serverId); return n; });
+    } catch (e) { handleError(e); }
+  };
 
   const disconnectServer = async (id: number) => {
     try {
@@ -291,14 +342,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const s = servers.find(x => x.id === serverId);
       if (!s) return;
-      if (!connectedServerIds.has(serverId)) await connectServer(serverId);
+      if (!connectedServerIds.has(serverId)) {
+        const ok = await connectServer(serverId);
+        // 首连指纹待确认(或连接失败):不继续开 PTY,等用户确认后再打开
+        if (!ok) return;
+      }
 
       // 预生成 terminal_id,先注册监听缓冲输出,再开 PTY
       // (解决时序:后端开 PTY 立即推数据,若前端监听未建立会丢初始输出)
       const termId = `term_${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
       ipc.frontendLog(`openTerminal 开始 id=${termId.slice(0, 16)} server=${serverId}`);
       await ipc.beginTerminalBuffer(termId);
-      await ipc.terminalOpen(serverId, cols ?? 80, rows ?? 24, termId);
+      try {
+        await ipc.terminalOpen(serverId, cols ?? 80, rows ?? 24, termId);
+      } catch (e) {
+        // 开 PTY 失败:必须回收已注册的缓冲监听,否则每次失败都泄漏一个事件监听器
+        ipc.disposeTerminalBuffer(termId);
+        throw e;
+      }
       ipc.frontendLog(`openTerminal PTY 已开 id=${termId.slice(0, 16)}`);
 
       const tab: TerminalTab = {
@@ -312,13 +373,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const closeTerminal = async (id: string) => {
-    try { await ipc.terminalClose(id); } catch {}
+    try { await ipc.terminalClose(id); } catch (e) { console.warn('[Witchcat Ops] 关闭终端失败', e); }
     ipc.disposeTerminalBuffer(id);
-    setTerminalTabs(prev => {
-      const next = prev.filter(t => t.id !== id);
-      if (activeTerminalId === id) setActiveTerminalId(next[0]?.id ?? null);
-      return next;
-    });
+    const nextTabs = terminalTabs.filter(t => t.id !== id);
+    setTerminalTabs(nextTabs);
+    if (activeTerminalId === id) setActiveTerminalId(nextTabs[0]?.id ?? null);
   };
 
   // ============ Audit ============
@@ -359,22 +418,97 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteQuickAction = async (id: string) => {
     try { await ipc.deleteQuickAction(id); await refreshQuickActions(); } catch (e) { handleError(e); }
   };
+
+  /** 实际执行步骤链(已获批准):guard 前置校验 + 逐步骤执行,全部走统一审计出口 */
+  const executeQuickActionSteps = async (
+    qa: QuickAction,
+    serverId: number,
+    steps: QuickActionStep[],
+    approvedBy: string,
+  ) => {
+    for (const step of steps) {
+      if (step.type !== 'command') continue;
+      // guard:执行前置条件检查,退出码非 0 立即中止整个流程
+      if (step.guard) {
+        try {
+          const guardResult = await executeCommand(serverId, step.guard, {
+            source: 'quick_action',
+            tool_name: 'quick_action_guard',
+            approved_by: approvedBy,
+          });
+          if (!guardResult.success) {
+            handleError(new Error(
+              `快捷指令 "${qa.name}" 守卫检查失败(${step.guard.slice(0, 60)}),已中止执行`
+            ));
+            return;
+          }
+        } catch (e) {
+          handleError(e);
+          return;
+        }
+      }
+      await executeCommand(serverId, step.value, {
+        source: 'quick_action',
+        tool_name: 'run_quick_action',
+        approved_by: approvedBy,
+      });
+    }
+  };
+
   const runQuickAction = async (actionId: string, serverId: number) => {
     const qa = quickActions.find(a => a.id === actionId);
     if (!qa) return;
+    const server = servers.find(s => s.id === serverId);
+
+    let steps: QuickActionStep[];
     try {
-      const steps = JSON.parse(qa.steps) as { type: string; value: string }[];
-      for (const step of steps) {
-        if (step.type === 'command') {
-          await executeCommand(serverId, step.value, {
-            source: 'quick_action',
-            tool_name: 'run_quick_action',
-            approved_by: qa.approval === 'always_approve' ? 'policy:auto_review' : 'user:quick_action',
-          });
-        }
-      }
-    } catch (e) { handleError(e); }
+      steps = JSON.parse(qa.steps) as QuickActionStep[];
+    } catch {
+      handleError(new Error(`快捷指令 "${qa.name}" 的 steps 不是合法 JSON,无法执行`));
+      return;
+    }
+    const commands = steps
+      .filter(s => s.type === 'command' && s.value.trim())
+      .map(s => ({ value: s.value, needsConfirm: !!s.confirm }));
+    if (commands.length === 0) {
+      handleError(new Error(`快捷指令 "${qa.name}" 没有可执行的命令步骤`));
+      return;
+    }
+
+    // 审批策略(修复:always_ask 必须弹确认,审计只在实际批准后写):
+    // - always_approve 且没有任何步骤标 confirm → 自动核准(policy:auto_review)
+    // - 其余 → 弹确认框,用户批准后才执行(approved_by = user:quick_action)
+    const autoApprove = qa.approval === 'always_approve' && !commands.some(c => c.needsConfirm);
+    if (autoApprove) {
+      await executeQuickActionSteps(qa, serverId, steps, 'policy:auto_review');
+    } else {
+      setPendingQuickAction({
+        actionId,
+        serverId,
+        serverName: server?.name ?? `#${serverId}`,
+        actionName: qa.name,
+        commands,
+      });
+    }
   };
+
+  const confirmQuickAction = async () => {
+    if (!pendingQuickAction) return;
+    const { actionId, serverId } = pendingQuickAction;
+    const qa = quickActions.find(a => a.id === actionId);
+    setPendingQuickAction(null);
+    if (!qa) return;
+    let steps: QuickActionStep[];
+    try {
+      steps = JSON.parse(qa.steps) as QuickActionStep[];
+    } catch {
+      handleError(new Error(`快捷指令 "${qa.name}" 的 steps 不是合法 JSON,无法执行`));
+      return;
+    }
+    await executeQuickActionSteps(qa, serverId, steps, 'user:quick_action');
+  };
+
+  const cancelQuickAction = () => setPendingQuickAction(null);
 
   // ============ Docs ============
   const refreshDocs = useCallback(async () => {
@@ -400,14 +534,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // ============ SFTP ============
+  // 目录请求代际:快速切换目录/服务器时,过期响应不得覆盖新数据
+  const sftpSeqRef = useRef(0);
   const refreshSftpFiles = useCallback(async () => {
     // 未连接不发请求(否则启动/未连接时必弹"服务器未连接")
     if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
+    const seq = ++sftpSeqRef.current;
     // 目录导航是用户主动操作,失败必须可见(持久错误条 + toast)
     try {
-      setSftpFiles(await ipc.sftpListDir(activeServerId, sftpPath));
+      const files = await ipc.sftpListDir(activeServerId, sftpPath);
+      if (seq !== sftpSeqRef.current) return; // 过期响应,丢弃
+      setSftpFiles(files);
       setSftpError(null);
     } catch (e) {
+      if (seq !== sftpSeqRef.current) return;
       const msg = typeof e === 'string' ? e : (e as { message?: string })?.message ?? String(e);
       setSftpFiles([]);
       setSftpError(msg);
@@ -452,11 +592,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // ============ Metrics ============
+  // 请求代际:5 秒轮询可能与上一轮重叠,旧响应后到会覆盖新数据(数值回跳)
+  const metricsSeqRef = useRef(0);
   const refreshMetrics = useCallback(async () => {
     // 未连接不发请求(避免启动时无意义的后端报错)
     if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
+    const seq = ++metricsSeqRef.current;
     // 后台轮询:失败静默(只记日志),不弹全局错误
-    try { setMetrics(await ipc.getMetrics(activeServerId)); } catch (e) { silentError(e); }
+    try {
+      const m = await ipc.getMetrics(activeServerId);
+      if (seq === metricsSeqRef.current) setMetrics(m);
+    } catch (e) { silentError(e); }
   }, [activeServerId, connectedServerIds]);
   useEffect(() => {
     refreshMetrics();
@@ -466,9 +612,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ============ Containers & Services ============
   // 后台自动刷新:失败静默;用户主动操作(controlContainer/controlService):失败弹提示
+  const containersSeqRef = useRef(0);
   const refreshContainers = useCallback(async () => {
     if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
-    try { setContainers(await ipc.listContainers(activeServerId)); } catch (e) { silentError(e); }
+    const seq = ++containersSeqRef.current;
+    try {
+      const list = await ipc.listContainers(activeServerId);
+      if (seq === containersSeqRef.current) setContainers(list);
+    } catch (e) { silentError(e); }
   }, [activeServerId, connectedServerIds]);
   useEffect(() => { refreshContainers(); }, [refreshContainers]);
 
@@ -480,9 +631,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) { handleError(e); }
   };
 
+  const servicesSeqRef = useRef(0);
   const refreshServices = useCallback(async () => {
     if (!activeServerId || !connectedServerIds.has(activeServerId)) return;
-    try { setServices(await ipc.listServices(activeServerId)); } catch (e) { silentError(e); }
+    const seq = ++servicesSeqRef.current;
+    try {
+      const list = await ipc.listServices(activeServerId);
+      if (seq === servicesSeqRef.current) setServices(list);
+    } catch (e) { silentError(e); }
   }, [activeServerId, connectedServerIds]);
   useEffect(() => { refreshServices(); }, [refreshServices]);
 
@@ -520,6 +676,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       auditLogs, auditStats, refreshAuditLogs, refreshAuditStats,
       skills, refreshSkills, upsertSkill, toggleSkill, deleteSkill,
       quickActions, refreshQuickActions, upsertQuickAction, deleteQuickAction, runQuickAction,
+      pendingQuickAction, confirmQuickAction, cancelQuickAction,
       docs, refreshDocs, upsertDoc, updateDocStatus, deleteDoc, convertDocToSkill,
       sftpPath, setSftpPath, sftpFiles, sftpError, refreshSftpFiles, readSftpFile, writeSftpFile,
       deleteSftpEntry, createSftpDir,

@@ -35,8 +35,13 @@ fn client_config() -> Arc<client::Config> {
 
 /// SSH 连接管理器(全局单例,通过 Tauri state 共享)
 pub struct SshManager {
-    /// server_id → 已认证的连接句柄
-    sessions: Mutex<HashMap<i64, russh::client::Handle<ClientHandler>>>,
+    /// server_id → 已认证的连接句柄。
+    ///
+    /// 每个连接一把独立 Mutex:同一服务器的命令天然串行
+    /// (russh Handle 的 channel_open_session 需要 &mut self),
+    /// 但**不同服务器之间完全并行** —— 旧实现是全局单锁,
+    /// 一台服务器跑长命令会阻塞所有服务器的全部操作。
+    sessions: Mutex<HashMap<i64, Arc<Mutex<russh::client::Handle<ClientHandler>>>>>,
 }
 
 /// 客户端 Handler(处理服务器事件,主要是 host key 校验)
@@ -133,7 +138,10 @@ impl SshManager {
             return Err(AppError::Ssh("用户名或密码错误".into()));
         }
 
-        self.sessions.lock().await.insert(server_id, session);
+        self.sessions
+            .lock()
+            .await
+            .insert(server_id, Arc::new(Mutex::new(session)));
 
         let fp = actual_fp.lock().await.clone().unwrap_or_default();
         log::info!("已连接到服务器 {server_id} ({host}:{port})");
@@ -180,7 +188,10 @@ impl SshManager {
             return Err(AppError::Ssh("私钥认证失败".into()));
         }
 
-        self.sessions.lock().await.insert(server_id, session);
+        self.sessions
+            .lock()
+            .await
+            .insert(server_id, Arc::new(Mutex::new(session)));
 
         let fp = actual_fp.lock().await.clone().unwrap_or_default();
         log::info!("已连接到服务器 {server_id} ({host}:{port}) via 私钥");
@@ -189,8 +200,9 @@ impl SshManager {
 
     /// 断开某服务器连接
     pub async fn disconnect(&self, server_id: i64) -> AppResult<()> {
-        let mut sessions = self.sessions.lock().await;
-        if let Some(mut session) = sessions.remove(&server_id) {
+        let session = self.sessions.lock().await.remove(&server_id);
+        if let Some(session) = session {
+            let session = session.lock().await;
             let _ = session
                 .disconnect(Disconnect::ByApplication, "", "English")
                 .await;
@@ -208,15 +220,25 @@ impl SshManager {
         server_id: i64,
         command: &str,
     ) -> AppResult<CommandResult> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(&server_id)
-            .ok_or(AppError::NotConnected(server_id))?;
+        // 取该服务器的连接句柄(全局 map 锁只做查找,瞬间释放);
+        // 后续只持有该服务器自己的锁,不同服务器之间完全并行。
+        let session = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&server_id)
+                .cloned()
+                .ok_or(AppError::NotConnected(server_id))?
+        };
 
-        let mut channel = session
-            .channel_open_session()
-            .await
-            .map_err(|e| AppError::Ssh(format!("打开 channel 失败: {e}")))?;
+        // 锁内仅打开 channel(russh 的 channel_open_session 需要 &mut Handle,
+        // 同一连接的命令天然串行;channel 打开后即独立于 handle)
+        let mut channel = {
+            let session = session.lock().await;
+            session
+                .channel_open_session()
+                .await
+                .map_err(|e| AppError::Ssh(format!("打开 channel 失败: {e}")))?
+        };
 
         channel
             .exec(true, command)
@@ -227,25 +249,44 @@ impl SshManager {
         let mut stderr = Vec::new();
         let mut exit_code: Option<i32> = None;
 
-        loop {
-            let Some(msg) = channel.wait().await else {
-                break;
-            };
-            match msg {
-                ChannelMsg::Data { ref data } => {
-                    stdout.extend_from_slice(data);
+        let read_loop = async {
+            loop {
+                let Some(msg) = channel.wait().await else {
+                    break;
+                };
+                match msg {
+                    ChannelMsg::Data { ref data } => {
+                        // 输出超上限后停止累积(防 `yes`/`cat /dev/zero` 打爆内存),
+                        // 但仍继续消费直到 EOF,保证协议状态正常
+                        if stdout.len() < MAX_OUTPUT_BYTES {
+                            stdout.extend_from_slice(data);
+                        }
+                    }
+                    ChannelMsg::ExtendedData { ref data, .. } => {
+                        // SSH 扩展数据(ext_code==1 即 stderr)
+                        if stderr.len() < MAX_OUTPUT_BYTES {
+                            stderr.extend_from_slice(data);
+                        }
+                    }
+                    ChannelMsg::ExitStatus { exit_status } => {
+                        exit_code = Some(exit_status as i32);
+                        // 不立即 break,继续读完缓冲
+                    }
+                    _ => {}
                 }
-                ChannelMsg::ExtendedData { ref data, .. } => {
-                    // SSH 扩展数据(ext_code==1 即 stderr)
-                    stderr.extend_from_slice(data);
-                }
-                ChannelMsg::ExitStatus { exit_status } => {
-                    exit_code = Some(exit_status as i32);
-                    // 不立即 break,继续读完缓冲
-                }
-                _ => {}
             }
-        }
+        };
+
+        // 总超时保护:远端命令挂起(网络半开/交互式命令误入)时
+        // 不会永久占用连接资源;超时后 channel drop 即关闭该命令通道
+        tokio::time::timeout(COMMAND_TIMEOUT, read_loop)
+            .await
+            .map_err(|_| {
+                AppError::Ssh(format!(
+                    "命令执行超时(超过 {} 秒),已中断: {command}",
+                    COMMAND_TIMEOUT.as_secs()
+                ))
+            })?;
 
         Ok(CommandResult {
             stdout: String::from_utf8_lossy(&stdout).to_string(),
@@ -261,11 +302,15 @@ impl SshManager {
         &self,
         server_id: i64,
     ) -> AppResult<russh_sftp::client::SftpSession> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(&server_id)
-            .ok_or(AppError::NotConnected(server_id))?;
+        let session = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&server_id)
+                .cloned()
+                .ok_or(AppError::NotConnected(server_id))?
+        };
 
+        let session = session.lock().await;
         let channel = session
             .channel_open_session()
             .await
@@ -292,12 +337,16 @@ impl SshManager {
         rows: u32,
         term: &str,
     ) -> AppResult<russh::Channel<russh::client::Msg>> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(&server_id)
-            .ok_or(AppError::NotConnected(server_id))?;
+        let session = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&server_id)
+                .cloned()
+                .ok_or(AppError::NotConnected(server_id))?
+        };
 
-        let mut channel = session
+        let session = session.lock().await;
+        let channel = session
             .channel_open_session()
             .await
             .map_err(|e| AppError::Ssh(format!("打开 channel 失败: {e}")))?;
@@ -318,6 +367,11 @@ impl SshManager {
         Ok(channel)
     }
 }
+
+/// 单次命令输出累积上限(防 `yes`/`cat /dev/zero` 类命令打爆内存)
+const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024; // 2 MB
+/// 单次命令总执行超时(防远端命令挂起永久占用连接)
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// 命令执行结果
 #[derive(Debug, Clone, serde::Serialize)]

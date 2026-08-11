@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Bot, Send, Check, X, Sparkles, Terminal, Loader2, AlertCircle } from 'lucide-react';
 import { AgentSession, loadAgentConfig, loadEnabledSkills, loadAgentServers } from '../lib/agent';
+import type { AgentConfig, AgentTurn } from '../lib/agent';
 import type { AgentMessage } from '../context/AppContext';
 
 /**
@@ -22,21 +23,63 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
   const [isRunning, setIsRunning] = useState(false);
   const [session, setSession] = useState<AgentSession | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // 会话的同步引用(供 effect 更新上下文,避免闭包捕获过期 session)
+  const sessionRef = useRef<AgentSession | null>(null);
+  // 上一轮的配置指纹(避免 providers 无关刷新导致会话/历史被重建)
+  const prevConfigRef = useRef<AgentConfig | null>(null);
+  // 每个提案消息对应的原始工具调用(供批准后回填模型上下文)
+  const turnRef = useRef<Map<string, AgentTurn>>(new Map());
 
-  // 初始化 Agent 会话
+  // 初始化 Agent 会话。
+  // 依赖 providers:Vault 锁定后 providers 刷新为掩码 → 会话停用(不持有明文 key);
+  // 解锁后自动恢复。配置未变化时保留现有会话与对话历史。
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
       const config = await loadAgentConfig();
       const enabledSkills = await loadEnabledSkills();
       const agentServers = await loadAgentServers();
-      if (!cancelled && config) {
-        setSession(new AgentSession(config, agentServers, enabledSkills));
+      if (cancelled) return;
+      if (!config) {
+        prevConfigRef.current = null;
+        sessionRef.current = null;
+        setSession(null);
+        return;
       }
+      const prev = prevConfigRef.current;
+      if (
+        prev && prev.baseUrl === config.baseUrl
+        && prev.model === config.model
+        && prev.apiKey === config.apiKey
+      ) {
+        prevConfigRef.current = config;
+        return; // 配置未变,保留会话与历史
+      }
+      prevConfigRef.current = config;
+      const s = new AgentSession(config, agentServers, enabledSkills);
+      sessionRef.current = s;
+      setSession(s);
     };
     init();
     return () => { cancelled = true; };
   }, [providers]);
+
+  // 服务器/技能列表变化时刷新会话注入的上下文(不重建会话,保留对话历史)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [agentServers, enabledSkills] = await Promise.all([
+          loadAgentServers(), loadEnabledSkills(),
+        ]);
+        if (cancelled) return;
+        sessionRef.current?.updateContext(agentServers, enabledSkills);
+      } catch {
+        // 上下文刷新失败不打断对话
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [skills, servers]);
 
   // 自动滚动
   useEffect(() => {
@@ -81,21 +124,58 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         },
         onProposal: () => {},
         onDone: (turn) => {
-          setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-            ...m,
-            content: turn.text || '(无文本输出)',
-            streaming: false,
-            // 有 tool_call 就转成 Proposal 卡片
-            ...(turn.toolCalls.length > 0 ? {
+          if (turn.toolCalls.length > 0) {
+            const call = turn.toolCalls[0];
+            // LLM 输出不可信:目标服务器/命令缺失时显式报错,绝不静默兜底到别的服务器
+            const sid = call.arguments.server_id;
+            const cmd = call.arguments.command;
+            const validServer = typeof sid === 'number'
+              && servers.some(s => s.id === sid)
+              && servers.find(s => s.id === sid)!.id === sid;
+            if (!validServer) {
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+                ...m,
+                content: `⚠ Agent 返回的提议缺少有效的目标服务器(server_id=${
+                  JSON.stringify(sid)
+                }),已跳过该提议。请让 Agent 明确指定服务器后重试。`,
+                streaming: false,
+              } : m));
+              setIsRunning(false);
+              return;
+            }
+            if (typeof cmd !== 'string' || !cmd.trim()) {
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+                ...m,
+                content: `⚠ Agent 返回的提议缺少命令内容(工具: ${call.name}),已跳过该提议。`,
+                streaming: false,
+              } : m));
+              setIsRunning(false);
+              return;
+            }
+            // 保存原始 turn,供批准后回填模型上下文
+            const proposalId = `prop_${agentMsgId}`;
+            turnRef.current.set(proposalId, turn);
+            setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+              ...m,
+              content: turn.text || '(无文本输出)',
+              streaming: false,
               proposal: {
-                id: `prop_${Date.now()}`,
-                command: String(turn.toolCalls[0].arguments.command || turn.toolCalls[0].name),
-                tool_name: turn.toolCalls[0].name,
-                server_id: turn.toolCalls[0].arguments.server_id as number || activeServerId || 1,
-                safe_to_run: turn.toolCalls[0].arguments.safe_to_run as boolean | undefined,
-              }
-            } : {}),
-          } : m));
+                id: proposalId,
+                command: String(cmd),
+                tool_name: call.name,
+                server_id: sid as number,
+                safe_to_run: call.arguments.safe_to_run as boolean | undefined,
+                toolCall: { id: call.id, name: call.name, arguments: call.arguments },
+                droppedToolCalls: turn.toolCalls.length - 1,
+              },
+            } : m));
+          } else {
+            setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+              ...m,
+              content: turn.text || '(无文本输出)',
+              streaming: false,
+            } : m));
+          }
           setIsRunning(false);
         },
         onError: (err) => {
@@ -106,6 +186,11 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         },
       });
     } catch (err) {
+      // fetch 网络层错误(断网/Provider 配置错误):占位消息必须结束"思考中"并展示错误
+      const msg = err instanceof Error ? err.message : String(err);
+      setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        ...m, content: `错误: ${msg}`, streaming: false
+      } : m));
       setIsRunning(false);
     }
   };
@@ -132,7 +217,8 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         ...m, proposal: { ...m.proposal!, result }
       } : m));
 
-      // 续轮:把结果回传给 Agent 总结
+      // 续轮:把执行结果以正确的 OpenAI 消息格式(assistant tool_call + tool 结果)
+      // 回填模型上下文,让模型看到自己提议的命令及结果
       setIsRunning(true);
       const resultMsgId = `msg_agent_${Date.now()}`;
       setMessages(prev => [...prev, {
@@ -140,18 +226,42 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       }]);
 
-      await session.sendMessage(
-        `命令执行完成。结果:\n${result.stdout}${result.stderr ? '\n错误输出:\n' + result.stderr : ''}\n退出码:${result.exit_code}`,
-        {
+      const resultText = `命令执行完成。\nstdout:\n${result.stdout}${result.stderr ? '\nstderr:\n' + result.stderr : ''}\n退出码:${result.exit_code}`;
+
+      // 用原始 tool_call 续轮(缺失时退化为普通文本续轮)
+      const turn = turnRef.current.get(msg.proposal.id);
+      const toolCall = msg.proposal.toolCall ?? turn?.toolCalls[0];
+      if (toolCall) {
+        await session.continueAfterExecution(toolCall, resultText, {
           onText: (text) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
           onProposal: () => {},
           onDone: () => {
             setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, streaming: false } : m));
             setIsRunning(false);
           },
-          onError: () => setIsRunning(false),
-        }
-      );
+          onError: (err) => {
+            setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+              ...m, content: `错误: ${err.message}`, streaming: false
+            } : m));
+            setIsRunning(false);
+          },
+        });
+      } else {
+        await session.sendMessage(resultText, {
+          onText: (text) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
+          onProposal: () => {},
+          onDone: () => {
+            setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, streaming: false } : m));
+            setIsRunning(false);
+          },
+          onError: (err) => {
+            setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+              ...m, content: `错误: ${err.message}`, streaming: false
+            } : m));
+            setIsRunning(false);
+          },
+        });
+      }
     } catch (err) {
       setIsRunning(false);
     }
@@ -233,6 +343,12 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: compact ? 11 : 12, background: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 4, color: 'var(--accent-cyan)', marginBottom: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                       {msg.proposal.command}
                     </div>
+                    {!!msg.proposal.droppedToolCalls && (
+                      <div style={{ fontSize: 11, color: 'var(--accent-amber)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <AlertCircle size={12} />
+                        本轮还有 {msg.proposal.droppedToolCalls} 个工具调用未列出(当前仅支持逐个审批)
+                      </div>
+                    )}
                     {msg.proposal.approved === undefined && (
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button className="btn btn-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => handleReject(msg.proposal!.id)}>

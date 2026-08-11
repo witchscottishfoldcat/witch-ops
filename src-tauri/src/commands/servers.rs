@@ -77,23 +77,21 @@ pub async fn update_server(
 ) -> AppResult<()> {
     input.validate()?;
 
-    // 如果提供了新凭证,重新加密;否则保留原值
-    let credential_enc = if let Some(cred) = &input.credential {
-        if !cred.is_empty() {
-            Some(state.seal_secret(cred).await?)
-        } else {
-            None
+    // 如果提供了非空新凭证,重新加密;
+    // None 或空串(表单未改动)一律保留原值,绝不静默清空已存凭证
+    let credential_enc = match input.credential.as_deref() {
+        Some(cred) if !cred.is_empty() => Some(state.seal_secret(cred).await?),
+        _ => {
+            // 不改凭证:查原值
+            use sqlx::Row;
+            let row =
+                sqlx::query("SELECT credential_enc FROM servers WHERE id = ?")
+                    .bind(id)
+                    .fetch_optional(state.db())
+                    .await?;
+            row.and_then(|r| r.try_get::<Option<String>, _>("credential_enc").ok())
+                .flatten()
         }
-    } else {
-        // 不改凭证:查原值
-        use sqlx::Row;
-        let row =
-            sqlx::query("SELECT credential_enc FROM servers WHERE id = ?")
-                .bind(id)
-                .fetch_optional(state.db())
-                .await?;
-        row.and_then(|r| r.try_get::<Option<String>, _>("credential_enc").ok())
-            .flatten()
     };
 
     let tags_json = input

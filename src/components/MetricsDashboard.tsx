@@ -3,13 +3,14 @@ import { useApp } from '../context/AppContext';
 import { Activity, Cpu, HardDrive, Clock, BarChart2 } from 'lucide-react';
 
 export const MetricsDashboard: React.FC = () => {
-  const { metrics, servers, activeServerId } = useApp();
+  const { metrics, servers, activeServerId, connectedServerIds } = useApp();
   const currentServer = servers.find(s => s.id === activeServerId);
 
   if (!metrics) {
+    const isConnected = activeServerId ? connectedServerIds.has(activeServerId) : false;
     return (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-dim)' }}>
-        {activeServerId ? '正在加载监控数据...' : '请先选择一个服务器'}
+        {!activeServerId ? '请先选择一个服务器' : isConnected ? '正在加载监控数据...' : '服务器未连接,请先连接后再查看监控'}
       </div>
     );
   }

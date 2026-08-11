@@ -3,6 +3,12 @@ import { useApp } from '../context/AppContext';
 import { Bot, Sparkles, FileText, BookOpen } from 'lucide-react';
 import { AgentChatPanel } from './AgentChatPanel';
 
+/** 安全 JSON 解析:渲染期非法 JSON 返回 null,避免白屏 */
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
+
 /**
  * Agent 智能运维 Copilot(全页)
  *
@@ -25,7 +31,7 @@ export const AgentCopilot: React.FC = () => {
             融合 SOP 技能库,协助排查、分析日志并生成提议指令。
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => {}} style={{ fontSize: 12 }}>
+        <button className="btn btn-secondary" disabled title="开发中" style={{ fontSize: 12, opacity: 0.5 }}>
           <FileText size={14} /> 一键总结并存为复盘文档
         </button>
       </div>
@@ -54,7 +60,7 @@ export const AgentCopilot: React.FC = () => {
                 <div key={s.id} style={{ background: 'rgba(0,0,0,0.3)', padding: 8, borderRadius: 6, border: '1px solid var(--border-color)' }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-main)' }}>{s.title}</div>
                   <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                    触发关键词: {s.triggers ? JSON.parse(s.triggers).join(', ') : '无'}
+                    触发关键词: {safeParse<string[]>(s.triggers)?.join(', ') ?? '无'}
                   </div>
                 </div>
               ))}

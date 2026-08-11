@@ -144,6 +144,7 @@ export class AgentSession {
   private skills: AgentSkillInfo[];
   private history: Array<Record<string, unknown>> = [];
   private cancelFlag = false;
+  private abortController: AbortController | null = null;
 
   constructor(
     config: AgentConfig,
@@ -151,6 +152,12 @@ export class AgentSession {
     skills: AgentSkillInfo[],
   ) {
     this.config = config;
+    this.servers = servers;
+    this.skills = skills;
+  }
+
+  /** 更新会话上下文(服务器/技能列表变化时调用,保留对话历史) */
+  updateContext(servers: AgentServer[], skills: AgentSkillInfo[]) {
     this.servers = servers;
     this.skills = skills;
   }
@@ -177,8 +184,11 @@ Rules:
 - If the user asks about a server not in the list, say so.`;
   }
 
-  /** 取消当前请求 */
-  cancel() { this.cancelFlag = true; }
+  /** 取消当前请求(立即中止底层 fetch,不再等网络响应) */
+  cancel() {
+    this.cancelFlag = true;
+    this.abortController?.abort();
+  }
 
   /** 发送用户消息,返回 Agent 的第一轮输出(含可能的 Proposal) */
   async sendMessage(userText: string, callbacks: AgentCallbacks): Promise<AgentTurn> {
@@ -231,20 +241,33 @@ Rules:
       ...this.history,
     ];
 
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.config.model,
-        stream: true,
-        temperature: 0.2,
-        tools: TOOLS,
-        messages,
-      }),
-    });
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+
+    // fetch 网络层错误(断网/DNS 失败/Provider 配置错误)必须走 onError,
+    // 否则 UI 的占位消息会永远停在"思考中"
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.config.model,
+          stream: true,
+          temperature: 0.2,
+          tools: TOOLS,
+          messages,
+        }),
+        signal,
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      callbacks.onError(error);
+      throw error;
+    }
 
     if (!resp.ok) {
       const err = await resp.text();
@@ -253,7 +276,13 @@ Rules:
       throw error;
     }
 
-    const reader = resp.body!.getReader();
+    if (!resp.body) {
+      const error = new Error('LLM 响应没有数据流(可能是流式支持被关闭)');
+      callbacks.onError(error);
+      throw error;
+    }
+
+    const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let text = '';
@@ -302,19 +331,35 @@ Rules:
               }
             }
           } catch {
-            // 忽略解析错误
+            // 忽略单条解析错误
           }
         }
       }
+    } catch (err) {
+      if (this.cancelFlag) {
+        // 用户主动取消:把已积累的内容作为结果返回,不报错
+      } else {
+        const error = err instanceof Error ? err : new Error(String(err));
+        callbacks.onError(error);
+        throw error;
+      }
     } finally {
+      this.abortController = null;
       reader.releaseLock();
     }
 
-    const toolCalls: AgentToolCall[] = Array.from(toolCallsMap.values()).map((tc, i) => ({
-      id: `call_${Date.now()}_${i}`,
-      name: tc.name || 'unknown',
-      arguments: tc.arguments ? JSON.parse(tc.arguments) : {},
-    }));
+    // 防御:LLM 返回的 tool_call arguments 可能不是合法 JSON,解析失败视为空参数
+    const toolCalls: AgentToolCall[] = Array.from(toolCallsMap.values()).map((tc, i) => {
+      let args: Record<string, unknown> = {};
+      if (tc.arguments) {
+        try { args = JSON.parse(tc.arguments); } catch { args = {}; }
+      }
+      return {
+        id: `call_${Date.now()}_${i}`,
+        name: tc.name || 'unknown',
+        arguments: args,
+      };
+    });
 
     const turn: AgentTurn = {
       text: text || null,
@@ -322,7 +367,10 @@ Rules:
       toolCalls,
     };
 
-    // 保存到历史(assistant 消息)
+    // 保存到历史(assistant 消息)。
+    // 注意:带 tool_calls 的轮次**不**入历史 —— 必须等工具执行结果,
+    // 由 continueAfterExecution 以「assistant(tool_call) + tool(结果)」成对补入,
+    // 否则模型上下文缺失自己提议的命令,且 API 会因 tool_call 未响应而报错。
     if (text) this.history.push({ role: 'assistant', content: text });
 
     callbacks.onDone(turn);
@@ -337,7 +385,10 @@ export async function loadAgentConfig(): Promise<AgentConfig | null> {
   const providers = await ipc.listProviders();
   const p = providers.find(pr => pr.api_key_enc && pr.api_key_enc !== '***');
   if (!p) return null;
-  const models = p.models ? JSON.parse(p.models) : [];
+  let models: string[] = [];
+  if (p.models) {
+    try { models = JSON.parse(p.models); } catch { models = []; }
+  }
   const model = p.default_model || models[0] || 'gpt-4o';
   return { baseUrl: p.base_url, apiKey: p.api_key_enc, model };
 }
@@ -345,11 +396,13 @@ export async function loadAgentConfig(): Promise<AgentConfig | null> {
 /** 加载启用的技能(注入系统提示) */
 export async function loadEnabledSkills(): Promise<AgentSkillInfo[]> {
   const skills = await ipc.listEnabledSkills();
-  return skills.map(s => ({
-    id: s.id,
-    title: s.title,
-    triggers: s.triggers ? JSON.parse(s.triggers) : [],
-  }));
+  return skills.map(s => {
+    let triggers: string[] = [];
+    if (s.triggers) {
+      try { triggers = JSON.parse(s.triggers); } catch { triggers = []; }
+    }
+    return { id: s.id, title: s.title, triggers };
+  });
 }
 
 /** 加载服务器列表 */

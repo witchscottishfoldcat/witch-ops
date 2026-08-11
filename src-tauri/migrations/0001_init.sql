@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   server_id       INTEGER,
   -- 冗余存 host,防服务器删除后审计记录失真
   server_host     TEXT,
-  -- 操作来源:agent / manual_terminal / quick_action / mcp_external
+  -- 操作来源:agent / manual_terminal / quick_action / mcp_external / sftp
   source          TEXT    NOT NULL,
   -- 工具名:run_command / read_file / write_file / delete_file 等
   tool_name       TEXT    NOT NULL,
