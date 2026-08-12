@@ -339,6 +339,19 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     e.preventDefault();
     if (!inputMsg.trim() || isRunning || !session) return;
 
+    // compact 模式(终端右侧面板)没有 sessionId:首次发消息时自动创建会话
+    // 这样终端里的对话也会持久化,在"对话记忆"里能看到
+    if (!sessionIdRef.current) {
+      try {
+        const id = await ipc.createAgentSession(
+          `${compact ? '终端助手' : '对话'} ${new Date().toLocaleString()}`,
+          activeServerId ?? undefined,
+        );
+        sessionIdRef.current = id;
+        localStorage.setItem('agent_active_session', id);
+      } catch { /* 创建失败不阻断对话,只是不持久化 */ }
+    }
+
     const userMsg: AgentMessage = {
       id: nextId('msg'), sender: 'user', content: inputMsg.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
