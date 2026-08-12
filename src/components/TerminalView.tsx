@@ -307,6 +307,8 @@ export const TerminalView: React.FC = () => {
             background: '#0b0d12',
             overflow: 'hidden',
             position: 'relative',
+            borderBottomLeftRadius: 'var(--apple-radius-md)',
+            borderBottomRightRadius: 'var(--apple-radius-md)',
           }}
         >
           {!activeTab && (

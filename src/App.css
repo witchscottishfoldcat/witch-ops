@@ -762,3 +762,41 @@ body {
 ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.28); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============ xterm 终端美化 ============ */
+
+/* 终端挂载点内边距:文字不贴边 */
+.terminal-window .xterm {
+  padding: 8px 10px;
+}
+
+/* xterm 滚动条与全局风格一致 */
+.xterm-viewport::-webkit-scrollbar { width: 6px; }
+.xterm-viewport::-webkit-scrollbar-thumb { background: rgba(100,210,255,0.2); border-radius: 3px; }
+.xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(100,210,255,0.35); }
+
+/* 终端选中区 */
+.xterm .xterm-selection div { background: rgba(100, 210, 255, 0.2) !important; }
+
+/* ============ Agent 消息气泡美化 ============ */
+
+/* agent 消息内的 Markdown 元素间距 */
+.agent-message-content > p:first-child { margin-top: 0; }
+.agent-message-content > p:last-child { margin-bottom: 0; }
+.agent-message-content > pre:first-child { margin-top: 0; }
+.agent-message-content > pre:last-child { margin-bottom: 0; }
+
+/* 代码块 hover 效果 */
+.agent-message-content pre:hover { border-color: rgba(100, 210, 255, 0.3); }
+
+/* ============ 输入框聚焦态 ============ */
+.input-field:focus {
+  outline: none;
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.1);
+}
+
+/* ============ 终端标签栏微调 ============ */
+.terminal-tab { transition: background 0.15s, color 0.15s; }
+.terminal-tab:hover:not(.active) { background: rgba(255,255,255,0.08); color: var(--apple-text-main); }
+.terminal-tab.active { border-bottom: 2px solid var(--accent-purple); background: rgba(139, 92, 246, 0.15); }

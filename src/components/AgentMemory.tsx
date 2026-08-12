@@ -6,6 +6,7 @@ import {
   History, Search, Trash2, ArrowRight, Bot, User, Terminal,
   FileText, Check, X, MessageSquare, Clock,
 } from 'lucide-react';
+import { MarkdownText } from './MarkdownText';
 
 /**
  * Agent 对话记忆(历史会话档案馆)
@@ -262,7 +263,7 @@ const MessagePreview: React.FC<{ msg: AgentMessage }> = ({ msg }) => {
           padding: '10px 14px', borderRadius: 10,
           fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word',
         }}>
-          <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content || '(空)'}</div>
+          <MarkdownText content={msg.content || '(空)'} fontSize={13} />
 
           {/* Proposal 卡片(只读) */}
           {msg.proposal && (

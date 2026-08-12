@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { Bot, Send, Check, X, Sparkles, Terminal, Loader2, AlertCircle, FileText, History } from 'lucide-react';
+import { MarkdownText } from './MarkdownText';
 import { AgentSession, loadAgentConfig, loadEnabledSkills, loadAgentServers, AgentToolCall, AgentTurn } from '../lib/agent';
 import type { AgentConfig } from '../lib/agent';
 import * as ipc from '../lib/ipc';
@@ -641,7 +642,9 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
                     <AlertCircle size={14} /> {msg.content}
                   </span>
                 ) : (
-                  <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                  <div className="agent-message-content">
+                    <MarkdownText content={msg.content} fontSize={compact ? 12 : 13} />
+                  </div>
                 )}
 
                 {/* Proposal 卡片 */}
