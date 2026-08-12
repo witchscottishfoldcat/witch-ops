@@ -185,19 +185,34 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
 
   /** 执行只读工具,返回结果文本(供 Agent 续轮) */
   const executeReadOnlyTool = async (call: AgentToolCall): Promise<string> => {
+    // 统一错误提取:Tauri IPC 错误是 { code, message } 对象,不是 Error 实例
+    const errMsg = (e: unknown): string => {
+      if (e instanceof Error) return e.message;
+      if (e && typeof e === 'object' && 'message' in e) return String((e as Record<string, unknown>).message);
+      return String(e);
+    };
+
     switch (call.name) {
       case 'get_metrics': {
         const sid = validateServerId(call.arguments.server_id);
         if (!sid) throw new Error('get_metrics 缺少有效的 server_id');
-        const m = await ipc.getMetrics(sid);
-        return JSON.stringify(m);
+        try {
+          const m = await ipc.getMetrics(sid);
+          return JSON.stringify(m);
+        } catch (e) {
+          throw new Error(`获取服务器 ${sid} 指标失败(可能未连接): ${errMsg(e)}`);
+        }
       }
       case 'read_file': {
         const sid = validateServerId(call.arguments.server_id);
         const path = call.arguments.path;
         if (!sid) throw new Error('read_file 缺少有效的 server_id');
         if (typeof path !== 'string') throw new Error('read_file 缺少 path 参数');
-        return await ipc.sftpReadFile(sid, path);
+        try {
+          return await ipc.sftpReadFile(sid, path);
+        } catch (e) {
+          throw new Error(`读取文件 ${path} 失败: ${errMsg(e)}`);
+        }
       }
       case 'get_skill': {
         const id = call.arguments.id;
@@ -244,7 +259,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     try {
       await sessionRef.current.continueAfterExecution(call, resultText, callbacks);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
       setMessages(prev => prev.map(m => m.id === resultMsgId ? {
         ...m, content: `错误: ${msg}`, streaming: false,
       } : m));
@@ -282,7 +297,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
         // 续轮:让 Agent 分析结果
         await continueWithResult(call, resultText);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
         setMessages(prev => prev.map(m => m.id === agentMsgId ? {
           ...m,
           content: (turn.text || '') + `\n\n⚠ 只读工具 \`${call.name}\` 执行失败: ${msg}`,
@@ -416,7 +431,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       });
       await dispatchToolCalls(turn, agentMsgId);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
       setMessages(prev => prev.map(m => m.id === agentMsgId ? {
         ...m, content: `错误: ${msg}`, streaming: false,
       } : m));
@@ -496,7 +511,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
         await session.sendMessage(resultText, callbacks);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
       setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${msg}`, streaming: false } : m));
       finalizeMessage(resultMsgId);
       setIsRunning(false);
