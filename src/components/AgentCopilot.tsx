@@ -16,14 +16,36 @@ export const AgentCopilot: React.FC = () => {
   const enabledSkills = skills.filter(s => s.enabled);
 
   const [sessions, setSessions] = useState<AgentSessionInfo[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // activeSessionId 持久化到 localStorage:切走再回来自动恢复上次对话
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    return localStorage.getItem('agent_active_session');
+  });
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  const selectSession = useCallback((id: string | null) => {
+    setActiveSessionId(id);
+    if (id) localStorage.setItem('agent_active_session', id);
+    else localStorage.removeItem('agent_active_session');
+  }, []);
 
   const refreshSessions = useCallback(async () => {
     try { setSessions(await ipc.listAgentSessions()); } catch { /* */ }
   }, []);
 
   useEffect(() => { refreshSessions(); }, [refreshSessions]);
+
+  // 挂载时如果没有选中会话:自动选中最近的会话(无缝恢复)
+  useEffect(() => {
+    if (activeSessionId) return; // 已有选中,不干预
+    refreshSessions().then(() => {
+      // 读最新列表,选中第一条
+      ipc.listAgentSessions().then(list => {
+        if (list.length > 0 && !localStorage.getItem('agent_active_session')) {
+          selectSession(list[0].id);
+        }
+      }).catch(() => {});
+    });
+  }, []); // 仅挂载时执行一次
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -38,7 +60,7 @@ export const AgentCopilot: React.FC = () => {
         activeServerId ?? undefined,
       );
       await refreshSessions();
-      setActiveSessionId(id);
+      selectSession(id);
     } catch { /* */ }
   };
 
@@ -47,7 +69,7 @@ export const AgentCopilot: React.FC = () => {
     setConfirmDelete(null);
     try {
       await ipc.deleteAgentSession(id);
-      if (activeSessionId === id) setActiveSessionId(null);
+      if (activeSessionId === id) selectSession(null);
       await refreshSessions();
     } catch { /* */ }
   };
@@ -79,7 +101,7 @@ export const AgentCopilot: React.FC = () => {
             {sessions.map(s => (
               <div
                 key={s.id}
-                onClick={() => setActiveSessionId(s.id)}
+                onClick={() => selectSession(s.id)}
                 style={{
                   padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
                   background: activeSessionId === s.id ? 'rgba(139, 92, 246, 0.15)' : 'rgba(0,0,0,0.2)',

@@ -162,6 +162,26 @@ export class AgentSession {
     this.skills = skills;
   }
 
+  /** 从持久化消息重建 LLM 对话上下文(history)
+   *  注意:只能恢复纯文本对话脉络;tool_call/tool 结果等结构化上下文无法重建,
+   *  因此续轮关联可能不完美,但基本的"之前聊过什么"能记住。 */
+  restoreHistory(messages: Array<{ sender: string; content: string }>) {
+    this.history = [];
+    for (const msg of messages) {
+      const text = msg.content?.trim();
+      if (!text) continue;
+      // 跳过错误消息和工具执行中间态(含 ⚠/⏳/✅ 前缀的)
+      if (text.startsWith('错误:') || text.startsWith('⚠')) continue;
+      if (msg.sender === 'user') {
+        this.history.push({ role: 'user', content: text });
+      } else if (msg.sender === 'agent') {
+        // 只取 agent 消息的正文部分(去掉工具结果块)
+        const cleanText = text.split('\n\n⏳')[0].split('\n\n✅')[0].trim();
+        if (cleanText) this.history.push({ role: 'assistant', content: cleanText });
+      }
+    }
+  }
+
   /** 构建系统提示 */
   private systemPrompt(): string {
     const serverList = this.servers.map(s => `- ${s.name} (id=${s.id}, host=${s.host})`).join('\n');

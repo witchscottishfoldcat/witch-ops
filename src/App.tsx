@@ -6,6 +6,7 @@ import { HostKeyModal } from './components/HostKeyModal';
 import { ServerManager } from './components/ServerManager';
 import { TerminalView } from './components/TerminalView';
 import { AgentCopilot } from './components/AgentCopilot';
+import { AgentMemory } from './components/AgentMemory';
 import { AuditLogs } from './components/AuditLogs';
 import { SkillsManager } from './components/SkillsManager';
 import { QuickActions } from './components/QuickActions';
@@ -26,10 +27,15 @@ const MainContent: React.FC = () => {
     <main className="content-area">
       <ErrorToast />
       <ErrorBoundary>
+        {/* Agent 视图常驻不卸载(CSS 隐藏/显示):保证切走再回来对话/会话状态不丢失。
+            TerminalView 的 xterm 缓存也是同款策略。其他轻量视图仍用条件渲染。 */}
+        <div style={{ display: activeView === 'agent' ? 'block' : 'none', height: '100%' }}>
+          <AgentCopilot />
+        </div>
         {activeView === 'servers' && <ServerManager />}
         {activeView === 'terminal' && <TerminalView />}
-        {activeView === 'agent' && <AgentCopilot />}
         {activeView === 'audit' && <AuditLogs />}
+        {activeView === 'agent_memory' && <AgentMemory />}
         {activeView === 'skills' && <SkillsManager />}
         {activeView === 'quick_actions' && <QuickActions />}
         {activeView === 'docs' && <DocsHub />}

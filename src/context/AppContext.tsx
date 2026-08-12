@@ -5,6 +5,7 @@ import {
   DirEntry, AuditContext, ExecuteResult
 } from '../types/backend';
 import * as ipc from '../lib/ipc';
+import type { AgentSessionInfo } from '../lib/ipc';
 
 export interface TerminalTab {
   id: string;          // 前端 tab id(等于后端 terminal_id)
@@ -158,6 +159,11 @@ interface AppContextType {
   addProvider: (input: ProviderInput) => Promise<void>;
   deleteProvider: (id: string) => Promise<void>;
 
+  // Agent 会话列表(对话记忆模块用)
+  agentSessions: AgentSessionInfo[];
+  refreshAgentSessions: () => Promise<void>;
+  deleteAgentSession: (id: string) => Promise<void>;
+
   // Errors
   lastError: string | null;
   clearError: () => void;
@@ -193,6 +199,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [containers, setContainers] = useState<Container[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [agentSessions, setAgentSessions] = useState<AgentSessionInfo[]>([]);
 
   const clearError = () => setLastError(null);
 
@@ -663,6 +670,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try { await ipc.deleteProvider(id); await refreshProviders(); } catch (e) { handleError(e); }
   };
 
+  // ============ Agent Sessions ============
+  const refreshAgentSessions = useCallback(async () => {
+    try { setAgentSessions(await ipc.listAgentSessions()); } catch (e) { handleError(e); }
+  }, []);
+  useEffect(() => { refreshAgentSessions(); }, [refreshAgentSessions]);
+
+  const deleteAgentSession = async (id: string) => {
+    try { await ipc.deleteAgentSession(id); await refreshAgentSessions(); } catch (e) { handleError(e); }
+  };
+
   return (
     <AppContext.Provider value={{
       theme, setTheme, isSidebarCollapsed, toggleSidebar,
@@ -684,6 +701,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       containers, refreshContainers, controlContainer,
       services, refreshServices, controlService,
       providers, refreshProviders, addProvider, deleteProvider,
+      agentSessions, refreshAgentSessions, deleteAgentSession,
       lastError, clearError,
     }}>
       {children}

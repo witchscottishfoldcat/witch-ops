@@ -114,7 +114,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     return () => { cancelled = true; };
   }, [skills, servers]);
 
-  // 会话切换时:加载历史消息
+  // 会话切换时:加载历史消息 + 重建 LLM 上下文
   useEffect(() => {
     sessionIdRef.current = sessionId;
     if (!sessionId) {
@@ -134,6 +134,8 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
           proposal: s.proposal as AgentProposal | undefined,
         }));
         setMessages(restored);
+        // 重建 LLM 上下文:让 Agent "记住"之前的对话
+        sessionRef.current?.restoreHistory(restored);
       } catch (e) { console.error('[Agent] 加载历史消息失败', e); }
     })();
     return () => { cancelled = true; };

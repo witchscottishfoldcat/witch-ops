@@ -3,13 +3,14 @@ import { useApp } from '../context/AppContext';
 import {
   Server, Terminal, Bot, ShieldCheck, BookOpen, Zap,
   FileCode, FolderTree, Activity, Box, Cpu, Settings,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen, History
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
   const {
     activeView, setActiveView, servers, auditLogs, skills,
     quickActions, docs, containers, services, terminalTabs,
+    agentSessions,
     isSidebarCollapsed, toggleSidebar
   } = useApp();
 
@@ -26,6 +27,7 @@ export const Sidebar: React.FC = () => {
       title: 'AI 智能与 SOP',
       items: [
         { id: 'agent', label: 'Agent Copilot', icon: Bot, badge: 'AI' },
+        { id: 'agent_memory', label: '对话记忆', icon: History, badge: agentSessions.length || undefined },
         { id: 'skills', label: 'SOP 技能库', icon: BookOpen, badge: skills.length },
         { id: 'quick_actions', label: '快捷指令', icon: Zap, badge: quickActions.length },
         { id: 'docs', label: '文档与飞轮', icon: FileCode, badge: docs.length },
