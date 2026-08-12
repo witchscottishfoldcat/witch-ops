@@ -1,38 +1,43 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Bot, Send, Check, X, Sparkles, Terminal, Loader2, AlertCircle } from 'lucide-react';
-import { AgentSession, loadAgentConfig, loadEnabledSkills, loadAgentServers } from '../lib/agent';
-import type { AgentConfig, AgentTurn } from '../lib/agent';
-import type { AgentMessage } from '../context/AppContext';
+import { Bot, Send, Check, X, Sparkles, Terminal, Loader2, AlertCircle, FileText } from 'lucide-react';
+import { AgentSession, loadAgentConfig, loadEnabledSkills, loadAgentServers, AgentToolCall, AgentTurn } from '../lib/agent';
+import type { AgentConfig } from '../lib/agent';
+import * as ipc from '../lib/ipc';
+import type { AgentMessage, AgentProposal } from '../context/AppContext';
+import type { ExecuteResult } from '../types/backend';
+
+/** 只读工具:自动执行,不走人工审批(结果回传 Agent 续轮) */
+const READ_ONLY_TOOLS = new Set(['get_metrics', 'read_file', 'get_skill']);
 
 /**
  * Agent 对话面板(可复用)
  *
- * 从 AgentCopilot 抽取的对话核心:会话初始化、流式收发、
- * 提案卡片审批执行。两处使用:
- * - AgentCopilot 全页模式
- * - TerminalView 右侧栏(compact 紧凑模式)
- *
- * 注意:每个实例持有独立的 AgentSession 与消息列表(互不共享上下文)。
+ * 工具分发策略:
+ * - 只读工具(get_metrics / read_file / get_skill):自动执行 → 结果回传 Agent 续轮
+ * - 写工具(run_command / write_file):生成提案卡片,人工审批后才执行
  */
 export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
-  const { skills, servers, activeServerId, executeCommand, providers } = useApp();
+  const {
+    skills, servers, activeServerId, executeCommand, providers,
+    upsertDoc,
+  } = useApp();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [inputMsg, setInputMsg] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [session, setSession] = useState<AgentSession | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // 会话的同步引用(供 effect 更新上下文,避免闭包捕获过期 session)
   const sessionRef = useRef<AgentSession | null>(null);
-  // 上一轮的配置指纹(避免 providers 无关刷新导致会话/历史被重建)
   const prevConfigRef = useRef<AgentConfig | null>(null);
-  // 每个提案消息对应的原始工具调用(供批准后回填模型上下文)
   const turnRef = useRef<Map<string, AgentTurn>>(new Map());
+  const msgIdCounter = useRef(0);
+  const [showSaveDoc, setShowSaveDoc] = useState(false);
 
-  // 初始化 Agent 会话。
-  // 依赖 providers:Vault 锁定后 providers 刷新为掩码 → 会话停用(不持有明文 key);
-  // 解锁后自动恢复。配置未变化时保留现有会话与对话历史。
+  // 唯一消息 ID(避免同毫秒冲突)
+  const nextId = (prefix: string) => `${prefix}_${Date.now()}_${msgIdCounter.current++}`;
+
+  // 初始化 Agent 会话
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
@@ -47,13 +52,9 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         return;
       }
       const prev = prevConfigRef.current;
-      if (
-        prev && prev.baseUrl === config.baseUrl
-        && prev.model === config.model
-        && prev.apiKey === config.apiKey
-      ) {
+      if (prev && prev.baseUrl === config.baseUrl && prev.model === config.model && prev.apiKey === config.apiKey) {
         prevConfigRef.current = config;
-        return; // 配置未变,保留会话与历史
+        return;
       }
       prevConfigRef.current = config;
       const s = new AgentSession(config, agentServers, enabledSkills);
@@ -64,205 +65,338 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
     return () => { cancelled = true; };
   }, [providers]);
 
-  // 服务器/技能列表变化时刷新会话注入的上下文(不重建会话,保留对话历史)
+  // 服务器/技能列表变化时刷新会话注入的上下文
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [agentServers, enabledSkills] = await Promise.all([
-          loadAgentServers(), loadEnabledSkills(),
-        ]);
+        const [agentServers, enabledSkills] = await Promise.all([loadAgentServers(), loadEnabledSkills()]);
         if (cancelled) return;
         sessionRef.current?.updateContext(agentServers, enabledSkills);
-      } catch {
-        // 上下文刷新失败不打断对话
-      }
+      } catch { /* 不打断对话 */ }
     })();
     return () => { cancelled = true; };
   }, [skills, servers]);
 
-  // 自动滚动
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 外部快捷 Prompt 填入输入框(如 Copilot 页右侧的常用 Prompt)
   useEffect(() => {
     const h = (e: Event) => setInputMsg((e as CustomEvent<string>).detail);
     window.addEventListener('agent:set-input', h);
     return () => window.removeEventListener('agent:set-input', h);
   }, []);
 
+  /** 校验 server_id 是否有效 */
+  const validateServerId = (sid: unknown): number | null => {
+    if (typeof sid !== 'number') return null;
+    return servers.some(s => s.id === sid) ? sid : null;
+  };
+
+  /** 执行只读工具,返回结果文本(供 Agent 续轮) */
+  const executeReadOnlyTool = async (call: AgentToolCall): Promise<string> => {
+    switch (call.name) {
+      case 'get_metrics': {
+        const sid = validateServerId(call.arguments.server_id);
+        if (!sid) throw new Error('get_metrics 缺少有效的 server_id');
+        const m = await ipc.getMetrics(sid);
+        return JSON.stringify(m);
+      }
+      case 'read_file': {
+        const sid = validateServerId(call.arguments.server_id);
+        const path = call.arguments.path;
+        if (!sid) throw new Error('read_file 缺少有效的 server_id');
+        if (typeof path !== 'string') throw new Error('read_file 缺少 path 参数');
+        return await ipc.sftpReadFile(sid, path);
+      }
+      case 'get_skill': {
+        const id = call.arguments.id;
+        if (typeof id !== 'string') throw new Error('get_skill 缺少 id 参数');
+        const skill = await ipc.getSkill(id);
+        return skill.content;
+      }
+      default:
+        throw new Error(`未知只读工具: ${call.name}`);
+    }
+  };
+
+  /** 将工具执行结果回传 Agent,自动续轮 */
+  const continueWithResult = async (
+    call: AgentToolCall,
+    resultText: string,
+  ) => {
+    if (!sessionRef.current) return;
+    const resultMsgId = nextId('msg_agent');
+    setMessages(prev => [...prev, {
+      id: resultMsgId, sender: 'agent', content: '', streaming: true,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    }]);
+
+    const callbacks = {
+      onText: (text: string) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
+      onProposal: () => {},
+      onDone: (turn: AgentTurn) => {
+        setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+          ...m, content: turn.text || '(分析完成)', streaming: false,
+        } : m));
+        // 续轮也可能产生新的工具调用
+        dispatchToolCalls(turn, resultMsgId);
+      },
+      onError: (err: Error) => {
+        setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+          ...m, content: `错误: ${err.message}`, streaming: false,
+        } : m));
+        setIsRunning(false);
+      },
+    };
+
+    try {
+      await sessionRef.current.continueAfterExecution(call, resultText, callbacks);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+        ...m, content: `错误: ${msg}`, streaming: false,
+      } : m));
+      setIsRunning(false);
+    }
+  };
+
+  /** 工具分发:只读工具自动执行,写工具生成 proposal */
+  const dispatchToolCalls = async (turn: AgentTurn, agentMsgId: string) => {
+    if (turn.toolCalls.length === 0) {
+      setIsRunning(false);
+      return;
+    }
+
+    const call = turn.toolCalls[0];
+    const isReadOnly = READ_ONLY_TOOLS.has(call.name);
+    const forceApproval = call.arguments.safe_to_run === false;
+
+    if (isReadOnly && !forceApproval) {
+      // 只读工具:自动执行 → 结果回传 Agent 续轮(用户看到"正在执行只读查询"的提示)
+      setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        ...m,
+        content: (turn.text || '') + `\n\n⏳ 自动执行只读工具 \`${call.name}\`…`,
+      } : m));
+
+      try {
+        const resultText = await executeReadOnlyTool(call);
+        // 先把工具结果展示给用户(附在当前消息后)
+        const preview = resultText.length > 500 ? resultText.slice(0, 500) + '\n…(截断)' : resultText;
+        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          ...m,
+          content: (turn.text || '') + `\n\n✅ \`${call.name}\` 结果:\n\`\`\`\n${preview}\n\`\`\``,
+        } : m));
+        // 续轮:让 Agent 分析结果
+        await continueWithResult(call, resultText);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          ...m,
+          content: (turn.text || '') + `\n\n⚠ 只读工具 \`${call.name}\` 执行失败: ${msg}`,
+          streaming: false,
+        } : m));
+        setIsRunning(false);
+      }
+      return;
+    }
+
+    // 写工具:生成 proposal 卡片
+    let proposal: AgentProposal | null = null;
+
+    if (call.name === 'run_command') {
+      const sid = validateServerId(call.arguments.server_id);
+      const cmd = call.arguments.command;
+      if (!sid) {
+        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          ...m,
+          content: `⚠ Agent 提议缺少有效的目标服务器,已跳过。`,
+          streaming: false,
+        } : m));
+        setIsRunning(false);
+        return;
+      }
+      if (typeof cmd !== 'string' || !cmd.trim()) {
+        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          ...m,
+          content: `⚠ Agent 提议缺少命令内容,已跳过。`,
+          streaming: false,
+        } : m));
+        setIsRunning(false);
+        return;
+      }
+      const proposalId = `prop_${agentMsgId}`;
+      turnRef.current.set(proposalId, turn);
+      proposal = {
+        id: proposalId,
+        command: cmd,
+        tool_name: 'run_command',
+        server_id: sid,
+        safe_to_run: call.arguments.safe_to_run as boolean | undefined,
+        toolCall: { id: call.id, name: call.name, arguments: call.arguments },
+        droppedToolCalls: turn.toolCalls.length - 1,
+      };
+    } else if (call.name === 'write_file') {
+      const sid = validateServerId(call.arguments.server_id);
+      const path = call.arguments.path;
+      const content = call.arguments.content;
+      if (!sid || typeof path !== 'string' || typeof content !== 'string') {
+        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          ...m,
+          content: `⚠ Agent 的 write_file 提议参数不完整,已跳过。`,
+          streaming: false,
+        } : m));
+        setIsRunning(false);
+        return;
+      }
+      const proposalId = `prop_${agentMsgId}`;
+      turnRef.current.set(proposalId, turn);
+      proposal = {
+        id: proposalId,
+        command: `写入文件 ${path}`,
+        tool_name: 'write_file',
+        server_id: sid,
+        toolCall: { id: call.id, name: call.name, arguments: call.arguments },
+        droppedToolCalls: turn.toolCalls.length - 1,
+      };
+    } else {
+      // 未知写工具
+      setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        ...m,
+        content: `⚠ 不支持的工具: ${call.name},已跳过。`,
+        streaming: false,
+      } : m));
+      setIsRunning(false);
+      return;
+    }
+
+    setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+      ...m,
+      content: turn.text || '(Agent 提议执行以下操作,请审批)',
+      streaming: false,
+      proposal,
+    } : m));
+    setIsRunning(false);
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputMsg.trim() || isRunning || !session) return;
 
     const userMsg: AgentMessage = {
-      id: `msg_${Date.now()}`,
-      sender: 'user',
-      content: inputMsg.trim(),
+      id: nextId('msg'), sender: 'user', content: inputMsg.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     };
     setMessages(prev => [...prev, userMsg]);
     setInputMsg('');
     setIsRunning(true);
 
-    // 占位消息用于流式更新
-    const agentMsgId = `msg_agent_${Date.now()}`;
+    const agentMsgId = nextId('msg_agent');
     setMessages(prev => [...prev, {
-      id: agentMsgId,
-      sender: 'agent' as const,
-      content: '',
+      id: agentMsgId, sender: 'agent', content: '', streaming: true,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      streaming: true,
     }]);
 
     try {
-      await session.sendMessage(userMsg.content, {
-        onText: (text) => {
-          setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: text } : m));
-        },
+      const turn = await session.sendMessage(userMsg.content, {
+        onText: (text) => setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: text } : m)),
         onProposal: () => {},
-        onDone: (turn) => {
-          if (turn.toolCalls.length > 0) {
-            const call = turn.toolCalls[0];
-            // LLM 输出不可信:目标服务器/命令缺失时显式报错,绝不静默兜底到别的服务器
-            const sid = call.arguments.server_id;
-            const cmd = call.arguments.command;
-            const validServer = typeof sid === 'number'
-              && servers.some(s => s.id === sid)
-              && servers.find(s => s.id === sid)!.id === sid;
-            if (!validServer) {
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-                ...m,
-                content: `⚠ Agent 返回的提议缺少有效的目标服务器(server_id=${
-                  JSON.stringify(sid)
-                }),已跳过该提议。请让 Agent 明确指定服务器后重试。`,
-                streaming: false,
-              } : m));
-              setIsRunning(false);
-              return;
-            }
-            if (typeof cmd !== 'string' || !cmd.trim()) {
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-                ...m,
-                content: `⚠ Agent 返回的提议缺少命令内容(工具: ${call.name}),已跳过该提议。`,
-                streaming: false,
-              } : m));
-              setIsRunning(false);
-              return;
-            }
-            // 保存原始 turn,供批准后回填模型上下文
-            const proposalId = `prop_${agentMsgId}`;
-            turnRef.current.set(proposalId, turn);
-            setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-              ...m,
-              content: turn.text || '(无文本输出)',
-              streaming: false,
-              proposal: {
-                id: proposalId,
-                command: String(cmd),
-                tool_name: call.name,
-                server_id: sid as number,
-                safe_to_run: call.arguments.safe_to_run as boolean | undefined,
-                toolCall: { id: call.id, name: call.name, arguments: call.arguments },
-                droppedToolCalls: turn.toolCalls.length - 1,
-              },
-            } : m));
-          } else {
-            setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-              ...m,
-              content: turn.text || '(无文本输出)',
-              streaming: false,
-            } : m));
-          }
-          setIsRunning(false);
+        onDone: (t) => {
+          // 只更新文本内容;工具分发由 dispatchToolCalls 处理
+          setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+            ...m, content: t.text || '', streaming: false,
+          } : m));
         },
         onError: (err) => {
           setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-            ...m, content: `错误: ${err.message}`, streaming: false
+            ...m, content: `错误: ${err.message}`, streaming: false,
           } : m));
           setIsRunning(false);
         },
       });
+      // 工具分发(只读自动执行,写操作生成 proposal)
+      await dispatchToolCalls(turn, agentMsgId);
     } catch (err) {
-      // fetch 网络层错误(断网/Provider 配置错误):占位消息必须结束"思考中"并展示错误
       const msg = err instanceof Error ? err.message : String(err);
       setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-        ...m, content: `错误: ${msg}`, streaming: false
+        ...m, content: `错误: ${msg}`, streaming: false,
       } : m));
       setIsRunning(false);
     }
   };
 
-  // 批准执行 Proposal
+  // 批准执行 Proposal(按工具类型分发)
   const handleApprove = async (proposalId: string) => {
     if (!session) return;
     const msg = messages.find(m => m.proposal?.id === proposalId);
     if (!msg?.proposal) return;
+    const proposal = msg.proposal;
+    const toolCall = proposal.toolCall;
+    if (!toolCall) return;
 
     setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
       ...m, proposal: { ...m.proposal!, approved: true }
     } : m));
 
+    setIsRunning(true);
+    const resultMsgId = nextId('msg_agent');
+    setMessages(prev => [...prev, {
+      id: resultMsgId, sender: 'agent', content: '', streaming: true,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    }]);
+
     try {
-      const result = await executeCommand(msg.proposal.server_id, msg.proposal.command, {
-        source: 'agent',
-        tool_name: msg.proposal.tool_name,
-        approved_by: 'user',
-        proposal_id: proposalId,
-      });
+      let resultText: string;
+      let execResult: ExecuteResult | undefined;
 
-      setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
-        ...m, proposal: { ...m.proposal!, result }
-      } : m));
-
-      // 续轮:把执行结果以正确的 OpenAI 消息格式(assistant tool_call + tool 结果)
-      // 回填模型上下文,让模型看到自己提议的命令及结果
-      setIsRunning(true);
-      const resultMsgId = `msg_agent_${Date.now()}`;
-      setMessages(prev => [...prev, {
-        id: resultMsgId, sender: 'agent' as const, content: '', streaming: true,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      }]);
-
-      const resultText = `命令执行完成。\nstdout:\n${result.stdout}${result.stderr ? '\nstderr:\n' + result.stderr : ''}\n退出码:${result.exit_code}`;
-
-      // 用原始 tool_call 续轮(缺失时退化为普通文本续轮)
-      const turn = turnRef.current.get(msg.proposal.id);
-      const toolCall = msg.proposal.toolCall ?? turn?.toolCalls[0];
-      if (toolCall) {
-        await session.continueAfterExecution(toolCall, resultText, {
-          onText: (text) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
-          onProposal: () => {},
-          onDone: () => {
-            setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, streaming: false } : m));
-            setIsRunning(false);
-          },
-          onError: (err) => {
-            setMessages(prev => prev.map(m => m.id === resultMsgId ? {
-              ...m, content: `错误: ${err.message}`, streaming: false
-            } : m));
-            setIsRunning(false);
-          },
+      if (proposal.tool_name === 'run_command') {
+        execResult = await executeCommand(proposal.server_id, proposal.command, {
+          source: 'agent',
+          tool_name: 'run_command',
+          approved_by: 'user',
+          proposal_id: proposalId,
         });
+        setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
+          ...m, proposal: { ...m.proposal!, result: execResult }
+        } : m));
+        resultText = `命令执行完成。\nstdout:\n${execResult.stdout}\n${execResult.stderr ? 'stderr:\n' + execResult.stderr + '\n' : ''}退出码:${execResult.exit_code}`;
+      } else if (proposal.tool_name === 'write_file') {
+        const path = toolCall.arguments.path as string;
+        const content = toolCall.arguments.content as string;
+        await ipc.sftpWriteFile(proposal.server_id, path, content);
+        execResult = { audit_id: 0, stdout: `文件 ${path} 已写入(${content.length} 字符)`, stderr: '', exit_code: 0, success: true };
+        setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
+          ...m, proposal: { ...m.proposal!, result: execResult }
+        } : m));
+        resultText = `文件写入完成: ${path}(${content.length} 字符)`;
       } else {
-        await session.sendMessage(resultText, {
-          onText: (text) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
-          onProposal: () => {},
-          onDone: () => {
-            setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, streaming: false } : m));
-            setIsRunning(false);
-          },
-          onError: (err) => {
-            setMessages(prev => prev.map(m => m.id === resultMsgId ? {
-              ...m, content: `错误: ${err.message}`, streaming: false
-            } : m));
-            setIsRunning(false);
-          },
-        });
+        throw new Error(`不支持的审批工具: ${proposal.tool_name}`);
+      }
+
+      // 续轮:让 Agent 分析执行结果
+      const callbacks = {
+        onText: (text: string) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
+        onProposal: () => {},
+        onDone: (t: AgentTurn) => {
+          setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: t.text || '(完成)', streaming: false } : m));
+          dispatchToolCalls(t, resultMsgId);
+        },
+        onError: (err: Error) => {
+          setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${err.message}`, streaming: false } : m));
+          setIsRunning(false);
+        },
+      };
+
+      const turn = turnRef.current.get(proposalId);
+      if (turn) {
+        await session.continueAfterExecution(toolCall, resultText, callbacks);
+      } else {
+        await session.sendMessage(resultText, callbacks);
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${msg}`, streaming: false } : m));
       setIsRunning(false);
     }
   };
@@ -271,6 +405,35 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
     setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
       ...m, proposal: { ...m.proposal!, approved: false }
     } : m));
+  };
+
+  /** 将当前对话存为复盘文档 */
+  const handleSaveAsDoc = async (title: string) => {
+    const transcript = messages
+      .filter(m => m.sender !== 'system')
+      .map(m => {
+        const time = m.timestamp;
+        if (m.sender === 'user') return `## [${time}] 用户\n${m.content}`;
+        const prop = m.proposal ? `\n\n> 提议: ${m.proposal.command}${m.proposal.result ? `(退出码:${m.proposal.result.exit_code})` : ''}` : '';
+        return `## [${time}] Agent\n${m.content}${prop}`;
+      })
+      .join('\n\n---\n\n');
+
+    const content = `# 运维复盘: ${title}\n\n> 由 Witchcat Agent 对话沉淀生成\n\n${transcript}`;
+    await upsertDoc({
+      id: `doc_${Date.now()}`,
+      type: 'postmortem',
+      title,
+      content,
+      session_id: null,
+      server_id: activeServerId,
+      generated_by: 'agent',
+      tags: JSON.stringify(['agent-session']),
+      status: 'draft',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    setShowSaveDoc(false);
   };
 
   const currentServer = servers.find(s => s.id === activeServerId);
@@ -290,9 +453,21 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
             节点: <strong>{currentServer?.name || '未选择'}</strong>
           </span>
         </div>
-        <span style={{ color: 'var(--accent-emerald)', fontSize: compact ? 10 : 11, flexShrink: 0 }}>
-          {enabledSkills.length} 项技能
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {messages.length > 0 && (
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: compact ? 10 : 11, padding: '2px 8px' }}
+              onClick={() => setShowSaveDoc(true)}
+              title="将当前对话存为复盘文档"
+            >
+              <FileText size={12} /> {!compact && '存为文档'}
+            </button>
+          )}
+          <span style={{ color: 'var(--accent-emerald)', fontSize: compact ? 10 : 11 }}>
+            {enabledSkills.length} 项技能
+          </span>
+        </div>
       </div>
 
       {/* 消息列表 */}
@@ -327,54 +502,18 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--accent-rose)' }}>
                     <AlertCircle size={14} /> {msg.content}
                   </span>
-                ) : msg.content}
+                ) : (
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                )}
 
                 {/* Proposal 卡片 */}
                 {msg.proposal && (
-                  <div style={{ marginTop: 10, background: '#070a10', border: '1px solid var(--accent-purple)', borderRadius: 8, padding: compact ? 8 : 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-purple)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <Terminal size={12} /> 提议执行
-                      </span>
-                      <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4 }}>
-                        {msg.proposal.tool_name}
-                      </span>
-                    </div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: compact ? 11 : 12, background: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 4, color: 'var(--accent-cyan)', marginBottom: 10, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {msg.proposal.command}
-                    </div>
-                    {!!msg.proposal.droppedToolCalls && (
-                      <div style={{ fontSize: 11, color: 'var(--accent-amber)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <AlertCircle size={12} />
-                        本轮还有 {msg.proposal.droppedToolCalls} 个工具调用未列出(当前仅支持逐个审批)
-                      </div>
-                    )}
-                    {msg.proposal.approved === undefined && (
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button className="btn btn-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => handleReject(msg.proposal!.id)}>
-                          <X size={12} /> 拒绝
-                        </button>
-                        <button className="btn btn-primary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => handleApprove(msg.proposal!.id)}>
-                          <Check size={12} /> 批准执行
-                        </button>
-                      </div>
-                    )}
-                    {msg.proposal.approved === true && (
-                      <div style={{ color: 'var(--accent-emerald)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <Check size={14} /> 已批准并执行
-                      </div>
-                    )}
-                    {msg.proposal.approved === false && (
-                      <div style={{ color: 'var(--accent-rose)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <X size={14} /> 已拒绝执行
-                      </div>
-                    )}
-                    {msg.proposal.result && (
-                      <div style={{ marginTop: 8, fontSize: 11, background: '#020305', padding: 8, borderRadius: 4, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', maxHeight: 100, overflowY: 'auto' }}>
-                        {msg.proposal.result.stdout}
-                      </div>
-                    )}
-                  </div>
+                  <ProposalCard
+                    proposal={msg.proposal}
+                    compact={compact}
+                    onApprove={handleApprove}
+                    onReject={handleReject}
+                  />
                 )}
               </div>
               {!compact && (
@@ -402,6 +541,136 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
           <Send size={14} /> {!compact && '发送'}
         </button>
       </form>
+
+      {/* 存为文档弹窗 */}
+      {showSaveDoc && (
+        <SaveDocDialog
+          defaultTitle={`运维对话 ${new Date().toLocaleDateString()}`}
+          onSave={handleSaveAsDoc}
+          onCancel={() => setShowSaveDoc(false)}
+        />
+      )}
+    </div>
+  );
+};
+
+// ==================== Proposal 卡片(按工具类型渲染) ====================
+
+const ProposalCard: React.FC<{
+  proposal: AgentProposal;
+  compact?: boolean;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}> = ({ proposal, compact, onApprove, onReject }) => {
+  const isWriteFile = proposal.tool_name === 'write_file';
+  const fileContent = isWriteFile ? String(proposal.toolCall?.arguments.content ?? '') : '';
+  const filePath = isWriteFile ? String(proposal.toolCall?.arguments.path ?? '') : '';
+
+  return (
+    <div style={{ marginTop: 10, background: '#070a10', border: '1px solid var(--accent-purple)', borderRadius: 8, padding: compact ? 8 : 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-purple)', display: 'flex', alignItems: 'center', gap: 4 }}>
+          {isWriteFile ? <FileText size={12} /> : <Terminal size={12} />}
+          {isWriteFile ? '提议写入文件' : '提议执行命令'}
+        </span>
+        <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4 }}>
+          {proposal.tool_name}
+          {proposal.safe_to_run && ' · 安全'}
+        </span>
+      </div>
+
+      {isWriteFile ? (
+        <>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: compact ? 11 : 12, color: 'var(--accent-cyan)', marginBottom: 6 }}>
+            📄 {filePath}
+          </div>
+          <div style={{
+            fontFamily: 'var(--font-mono)', fontSize: compact ? 11 : 12,
+            background: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 4,
+            color: 'var(--text-main)', marginBottom: 10,
+            maxHeight: 120, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          }}>
+            {fileContent.slice(0, 500)}{fileContent.length > 500 && '\n…(仅预览前500字符)'}
+          </div>
+        </>
+      ) : (
+        <div style={{
+          fontFamily: 'var(--font-mono)', fontSize: compact ? 11 : 12,
+          background: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 4,
+          color: 'var(--accent-cyan)', marginBottom: 10,
+          overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+        }}>
+          {proposal.command}
+        </div>
+      )}
+
+      {!!proposal.droppedToolCalls && (
+        <div style={{ fontSize: 11, color: 'var(--accent-amber)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <AlertCircle size={12} />
+          本轮还有 {proposal.droppedToolCalls} 个工具调用未列出
+        </div>
+      )}
+
+      {proposal.approved === undefined && (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => onReject(proposal.id)}>
+            <X size={12} /> 拒绝
+          </button>
+          <button className="btn btn-primary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => onApprove(proposal.id)}>
+            <Check size={12} /> 批准执行
+          </button>
+        </div>
+      )}
+      {proposal.approved === true && (
+        <div style={{ color: 'var(--accent-emerald)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Check size={14} /> 已批准并执行
+        </div>
+      )}
+      {proposal.approved === false && (
+        <div style={{ color: 'var(--accent-rose)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <X size={14} /> 已拒绝执行
+        </div>
+      )}
+      {proposal.result && (
+        <div style={{ marginTop: 8, fontSize: 11, background: '#020305', padding: 8, borderRadius: 4, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', maxHeight: 100, overflowY: 'auto' }}>
+          {proposal.result.stdout}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ==================== 存为文档弹窗 ====================
+
+const SaveDocDialog: React.FC<{
+  defaultTitle: string;
+  onSave: (title: string) => void;
+  onCancel: () => void;
+}> = ({ defaultTitle, onSave, onCancel }) => {
+  const [title, setTitle] = useState(defaultTitle);
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: 420 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>将对话存为复盘文档</h3>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>文档标题</label>
+          <input
+            className="input-field"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 16 }}>
+          对话内容将保存为复盘文档(草稿状态),可在文档中心查看并转为 SOP 技能。
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button className="btn btn-secondary" onClick={onCancel}><X size={14} /> 取消</button>
+          <button className="btn btn-primary" onClick={() => onSave(title)} disabled={!title.trim()}>
+            <Check size={14} /> 保存
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

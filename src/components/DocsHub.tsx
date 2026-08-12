@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Doc } from '../types/backend';
-import { FileCode, Sparkles, BookOpen, CheckCircle, Trash2, Eye, ArrowRight, Flame, FileText, Bot, User, X } from 'lucide-react';
+import { FileCode, Sparkles, BookOpen, CheckCircle, Trash2, Eye, ArrowRight, Flame, FileText, Bot, User, X, Plus } from 'lucide-react';
 
 export const DocsHub: React.FC = () => {
-  const { docs, updateDocStatus, deleteDoc, convertDocToSkill } = useApp();
+  const { docs, updateDocStatus, deleteDoc, convertDocToSkill, upsertDoc } = useApp();
   const [selectedType, setSelectedType] = useState<string>('all');
   const [activeDoc, setActiveDoc] = useState<Doc | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [editingDoc, setEditingDoc] = useState<Doc | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // 两步确认:3 秒后自动复位
   useEffect(() => {
@@ -15,6 +17,33 @@ export const DocsHub: React.FC = () => {
     const t = setTimeout(() => setConfirmDeleteId(null), 3000);
     return () => clearTimeout(t);
   }, [confirmDeleteId]);
+
+  const handleNewDoc = () => {
+    setEditingDoc({
+      id: `doc_${Date.now()}`,
+      type: 'sop',
+      title: '',
+      content: '',
+      session_id: null,
+      server_id: null,
+      generated_by: 'user',
+      tags: null,
+      status: 'draft',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  };
+
+  const handleSaveDoc = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDoc || !editingDoc.title.trim()) return;
+    setSaving(true);
+    try {
+      await upsertDoc({ ...editingDoc, updated_at: new Date().toISOString() });
+      setEditingDoc(null);
+    } catch { /* toast 已提示 */ }
+    finally { setSaving(false); }
+  };
 
   const filteredDocs = docs.filter(d => {
     if (selectedType === 'all') return true;
@@ -31,6 +60,9 @@ export const DocsHub: React.FC = () => {
           </h2>
           <p className="page-subtitle">沉淀变更记录、事故复盘与 SOP 文档。经过审核后的文档可一键转换存入 SOP 技能库，闭环注入 Agent 系统提示。</p>
         </div>
+        <button className="btn btn-primary" onClick={handleNewDoc}>
+          <Plus size={16} /> 新建文档
+        </button>
       </div>
 
       {/* Flywheel Architecture Card */}
@@ -164,6 +196,55 @@ export const DocsHub: React.FC = () => {
             <div style={{ background: '#030509', padding: 16, borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 12, color: '#e5e7eb', maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
               {activeDoc.content}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 新建/编辑文档弹窗 */}
+      {editingDoc && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ width: 640, maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>
+              {editingDoc.title ? '编辑文档' : '新建文档'}
+            </h3>
+            <form onSubmit={handleSaveDoc} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>标题</label>
+                <input className="input-field" value={editingDoc.title}
+                  onChange={e => setEditingDoc({ ...editingDoc, title: e.target.value })}
+                  required autoFocus />
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>类型</label>
+                  <select className="input-field" value={editingDoc.type}
+                    onChange={e => setEditingDoc({ ...editingDoc, type: e.target.value as Doc['type'] })}>
+                    <option value="sop" style={{ background: '#10141e' }}>标准 SOP</option>
+                    <option value="postmortem" style={{ background: '#10141e' }}>事故复盘</option>
+                    <option value="change_record" style={{ background: '#10141e' }}>变更记录</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>标签(JSON 数组,可选)</label>
+                  <input className="input-field" placeholder='["nginx","生产"]'
+                    value={editingDoc.tags ?? ''}
+                    onChange={e => setEditingDoc({ ...editingDoc, tags: e.target.value || null })} />
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>内容(Markdown)</label>
+                <textarea className="input-field" rows={12}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
+                  value={editingDoc.content}
+                  onChange={e => setEditingDoc({ ...editingDoc, content: e.target.value })} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setEditingDoc(null)} disabled={saving}>取消</button>
+                <button type="submit" className="btn btn-primary" disabled={saving || !editingDoc.title.trim()}>
+                  {saving ? '保存中…' : '保存文档'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
