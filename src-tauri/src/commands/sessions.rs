@@ -29,7 +29,7 @@ pub struct StoredMessage {
 pub struct AgentSessionInfo {
     pub id: String,
     pub title: Option<String>,
-    pub server_id: Option<i64>,
+    pub server_ids: Option<String>, // JSON 数组字符串,如 "[1]" 或 null
     pub model: Option<String>,
     pub tool_calls_count: i64,
     pub created_at: String,
@@ -60,13 +60,16 @@ pub async fn create_agent_session(
     let id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     let transcript = format!("sessions/{id}.jsonl");
 
+    // 表里 server_ids 是 JSON 数组字符串(如 "[1]"),由单个 server_id 参数转换
+    let server_ids_json = server_id.map(|id| format!("[{id}]"));
+
     sqlx::query(
-        "INSERT INTO agent_sessions (id, title, server_id, model, transcript_path)
+        "INSERT INTO agent_sessions (id, title, server_ids, model, transcript_path)
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&title)
-    .bind(server_id)
+    .bind(&server_ids_json)
     .bind(&model)
     .bind(&transcript)
     .execute(state.db())
@@ -85,7 +88,7 @@ pub async fn create_agent_session(
 #[tauri::command]
 pub async fn list_agent_sessions(state: State<'_, AppState>) -> AppResult<Vec<AgentSessionInfo>> {
     let sessions = sqlx::query_as::<_, AgentSessionInfo>(
-        "SELECT id, title, server_id, model, tool_calls_count, created_at, updated_at
+        "SELECT id, title, server_ids, model, tool_calls_count, created_at, updated_at
          FROM agent_sessions ORDER BY datetime(updated_at) DESC",
     )
     .fetch_all(state.db())

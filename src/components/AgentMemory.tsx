@@ -87,7 +87,14 @@ export const AgentMemory: React.FC = () => {
   };
 
   const selectedSession = agentSessions.find(s => s.id === selectedId);
-  const serverName = (sid: number | null) => servers.find(s => s.id === sid)?.name;
+  const serverName = (s: typeof agentSessions[number]) => {
+    if (!s.server_ids) return undefined;
+    try {
+      const ids: number[] = JSON.parse(s.server_ids);
+      const name = ids.length > 0 ? servers.find(sv => sv.id === ids[0])?.name : undefined;
+      return name;
+    } catch { return undefined; }
+  };
 
   return (
     <div>
@@ -156,9 +163,9 @@ export const AgentMemory: React.FC = () => {
                             <MessageSquare size={10} /> {msgCount}
                           </span>
                         )}
-                        {s.server_id && serverName(s.server_id) && (
+                        {s.server_ids && serverName(s) && (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--accent-cyan)' }}>
-                            {serverName(s.server_id)}
+                            {serverName(s)}
                           </span>
                         )}
                       </div>
@@ -200,7 +207,7 @@ export const AgentMemory: React.FC = () => {
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{selectedSession?.title || '(未命名)'}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-                    {selectedSession && serverName(selectedSession.server_id) && `服务器: ${serverName(selectedSession.server_id)} · `}
+                    {selectedSession && serverName(selectedSession) && `服务器: ${serverName(selectedSession)} · `}
                     {messages.length} 条消息 · {selectedSession && new Date(selectedSession.updated_at).toLocaleString()}
                   </div>
                 </div>

@@ -170,7 +170,7 @@ export interface StoredMessage {
 export interface AgentSessionInfo {
   id: string;
   title: string | null;
-  server_id: number | null;
+  server_ids: string | null; // JSON 数组字符串,如 "[1]"
   model: string | null;
   tool_calls_count: number;
   created_at: string;

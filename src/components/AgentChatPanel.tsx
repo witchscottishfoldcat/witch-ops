@@ -46,7 +46,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       proposal: msg.proposal,
     };
     ipc.appendAgentMessage(sessionIdRef.current, stored).catch(e =>
-      console.error('[Agent] 消息持久化失败', e)
+      ipc.frontendLog(`[AgentPanel] persist 失败: ${e}`)
     );
   }, []);
 
@@ -81,6 +81,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       const enabledSkills = await loadEnabledSkills();
       const agentServers = await loadAgentServers();
       if (cancelled) return;
+      ipc.frontendLog(`[AgentPanel ${compact ? 'compact' : 'full'}] init: config=${config ? '有' : '无'} servers=${agentServers.length} skills=${enabledSkills.length}`);
       if (!config) {
         prevConfigRef.current = null;
         sessionRef.current = null;
@@ -96,6 +97,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       const s = new AgentSession(config, agentServers, enabledSkills);
       sessionRef.current = s;
       setSession(s);
+      ipc.frontendLog(`[AgentPanel ${compact ? 'compact' : 'full'}] session 已创建 model=${config.model}`);
     };
     init();
     return () => { cancelled = true; };
@@ -337,7 +339,10 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMsg.trim() || isRunning || !session) return;
+    if (!inputMsg.trim() || isRunning || !session) {
+      ipc.frontendLog(`[AgentPanel] handleSend 被拦截: input=${!!inputMsg.trim()} running=${isRunning} session=${!!session}`);
+      return;
+    }
 
     // compact 模式(终端右侧面板)没有 sessionId:首次发消息时自动创建会话
     // 这样终端里的对话也会持久化,在"对话记忆"里能看到
@@ -349,7 +354,8 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
         );
         sessionIdRef.current = id;
         localStorage.setItem('agent_active_session', id);
-      } catch { /* 创建失败不阻断对话,只是不持久化 */ }
+        ipc.frontendLog(`[AgentPanel] 创建后端会话 ${id}`);
+      } catch (err) { ipc.frontendLog(`[AgentPanel] 创建会话失败: ${err}`); }
     }
 
     const userMsg: AgentMessage = {
