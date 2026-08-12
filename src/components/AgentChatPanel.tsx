@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
-import { Bot, Send, Check, X, Sparkles, Terminal, Loader2, AlertCircle, FileText } from 'lucide-react';
+import { Bot, Send, Check, X, Sparkles, Terminal, Loader2, AlertCircle, FileText, History } from 'lucide-react';
 import { AgentSession, loadAgentConfig, loadEnabledSkills, loadAgentServers, AgentToolCall, AgentTurn } from '../lib/agent';
 import type { AgentConfig } from '../lib/agent';
 import * as ipc from '../lib/ipc';
@@ -20,7 +20,7 @@ const READ_ONLY_TOOLS = new Set(['get_metrics', 'read_file', 'get_skill']);
 export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | null }> = ({ compact = false, sessionId = null }) => {
   const {
     skills, servers, activeServerId, executeCommand, providers,
-    upsertDoc, refreshAgentSessions,
+    upsertDoc, refreshAgentSessions, agentSessions,
   } = useApp();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -34,6 +34,26 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
   const msgIdCounter = useRef(0);
   const [showSaveDoc, setShowSaveDoc] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  /** 手动切换到指定会话(compact 模式用) */
+  const switchSession = async (id: string) => {
+    sessionIdRef.current = id;
+    localStorage.setItem('agent_active_session', id);
+    setShowHistory(false);
+    try {
+      const stored = await ipc.loadAgentMessages(id);
+      const restored: AgentMessage[] = stored.map(s => ({
+        id: s.id,
+        sender: s.sender as 'user' | 'agent' | 'system',
+        content: s.content,
+        timestamp: s.timestamp,
+        proposal: s.proposal as AgentProposal | undefined,
+      }));
+      setMessages(restored);
+      sessionRef.current?.restoreHistory(restored);
+    } catch { /* */ }
+  };
 
   /** 持久化一条消息到后端 JSONL */
   const persistMessage = useCallback((msg: AgentMessage) => {
@@ -548,11 +568,45 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
               <FileText size={12} /> {!compact && '存为文档'}
             </button>
           )}
+          {/* 历史对话切换按钮 */}
+          {agentSessions.length > 0 && (
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: compact ? 10 : 11, padding: '2px 8px' }}
+              onClick={() => setShowHistory(!showHistory)}
+              title="切换历史对话"
+            >
+              <History size={12} /> {!compact && '历史'}
+            </button>
+          )}
           <span style={{ color: 'var(--accent-emerald)', fontSize: compact ? 10 : 11 }}>
             {enabledSkills.length} 项技能
           </span>
         </div>
       </div>
+
+      {/* 历史对话折叠列表(compact 模式也可用) */}
+      {showHistory && (
+        <div style={{
+          background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-color)',
+          borderRadius: 6, padding: 6, marginBottom: 8, maxHeight: 200, overflowY: 'auto',
+          display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0,
+        }}>
+          {agentSessions.map(s => (
+            <div
+              key={s.id}
+              onClick={() => switchSession(s.id)}
+              style={{
+                padding: '5px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11,
+                background: sessionIdRef.current === s.id ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              {s.title || '(未命名)'} <span style={{ color: 'var(--text-dim)', fontSize: 9 }}>{new Date(s.updated_at).toLocaleDateString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* 消息列表 */}
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: compact ? 10 : 14, paddingRight: 4, minHeight: 0 }}>
