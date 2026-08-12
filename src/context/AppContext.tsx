@@ -233,24 +233,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => { refreshVaultState(); }, [refreshVaultState]);
 
   const setupVault = async (pass: string) => {
-    try { await ipc.vaultSetup(pass); await refreshVaultState(); return true; }
+    try { await ipc.vaultSetup(pass); await refreshVaultState(); await refreshProviders(); return true; }
     catch (e) { handleError(e); return false; }
   };
   const unlockVault = async (pass: string) => {
-    try { await ipc.vaultUnlock(pass); await refreshVaultState(); return true; }
+    try { await ipc.vaultUnlock(pass); await refreshVaultState(); await refreshProviders(); return true; }
     catch (e) { handleError(e); return false; }
   };
   const lockVault = async () => {
     try {
       await ipc.vaultLock();
       setIsVaultUnlocked(false);
-      // 后端锁定后 providers 返回掩码('***'),刷新前端状态,
-      // 避免界面上残留解密明文 key
       await refreshProviders();
     } catch (e) { handleError(e); }
   };
   const recoverVault = async (pass: string) => {
-    try { await ipc.vaultRecover(pass); await refreshVaultState(); return true; }
+    try { await ipc.vaultRecover(pass); await refreshVaultState(); await refreshProviders(); return true; }
     catch (e) { handleError(e); return false; }
   };
   const resetVault = async () => {

@@ -77,6 +77,7 @@ pub async fn create_agent_session(
     tokio::fs::File::create(&path).await
         .map_err(|e| AppError::Internal(format!("创建会话文件失败: {e}")))?;
 
+    log::info!("[session] 创建会话 {id} title={:?} server={:?}", title, server_id);
     Ok(id)
 }
 
@@ -157,6 +158,8 @@ pub async fn append_agent_message(
         .map_err(|e| AppError::Internal(format!("写入会话失败: {e}")))?;
     file.write_all(b"\n").await
         .map_err(|e| AppError::Internal(format!("写入换行失败: {e}")))?;
+
+    log::info!("[session] 追加消息到 {session_id}: {} ({}字节)", message.id, line.len());
 
     // 更新会话的 updated_at
     sqlx::query("UPDATE agent_sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
