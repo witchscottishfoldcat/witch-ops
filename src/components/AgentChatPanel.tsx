@@ -20,7 +20,7 @@ const READ_ONLY_TOOLS = new Set(['get_metrics', 'read_file', 'get_skill']);
 export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | null }> = ({ compact = false, sessionId = null }) => {
   const {
     skills, servers, activeServerId, executeCommand, providers,
-    upsertDoc,
+    upsertDoc, refreshAgentSessions,
   } = useApp();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -354,6 +354,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
         );
         sessionIdRef.current = id;
         localStorage.setItem('agent_active_session', id);
+        refreshAgentSessions();  // 通知对话记忆/Sidebar 更新列表
         ipc.frontendLog(`[AgentPanel] 创建后端会话 ${id}`);
       } catch (err) { ipc.frontendLog(`[AgentPanel] 创建会话失败: ${err}`); }
     }

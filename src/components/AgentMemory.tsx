@@ -15,13 +15,16 @@ import {
  * - "继续对话"跳转到 Agent Copilot 并选中该会话
  */
 export const AgentMemory: React.FC = () => {
-  const { agentSessions, deleteAgentSession, servers, setActiveView } = useApp();
+  const { agentSessions, deleteAgentSession, refreshAgentSessions, servers, setActiveView } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [msgCounts, setMsgCounts] = useState<Record<string, number>>({});
+
+  // 每次打开对话记忆页面:刷新会话列表(捕获在别的页面新建的会话)
+  useEffect(() => { refreshAgentSessions(); }, [refreshAgentSessions]);
 
   // 确认删除 3 秒复位
   useEffect(() => {
