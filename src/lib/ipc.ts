@@ -159,6 +159,36 @@ export const onTerminalExit = (
 export const frontendLog = (msg: string) =>
   invoke<void>('frontend_log', { msg }).catch(() => {});
 
+// ============ Agent 会话持久化 ============
+export interface StoredMessage {
+  id: string;
+  sender: string;
+  content: string;
+  timestamp: string;
+  proposal?: unknown;
+}
+export interface AgentSessionInfo {
+  id: string;
+  title: string | null;
+  server_id: number | null;
+  model: string | null;
+  tool_calls_count: number;
+  created_at: string;
+  updated_at: string;
+}
+export const createAgentSession = (title?: string, serverId?: number, model?: string) =>
+  invoke<string>('create_agent_session', { title, serverId, model });
+export const listAgentSessions = () =>
+  invoke<AgentSessionInfo[]>('list_agent_sessions');
+export const loadAgentMessages = (sessionId: string) =>
+  invoke<StoredMessage[]>('load_agent_messages', { sessionId });
+export const appendAgentMessage = (sessionId: string, message: StoredMessage) =>
+  invoke<void>('append_agent_message', { sessionId, message });
+export const renameAgentSession = (id: string, title: string) =>
+  invoke<void>('rename_agent_session', { id, title });
+export const deleteAgentSession = (id: string) =>
+  invoke<void>('delete_agent_session', { id });
+
 // ============ 终端输出缓冲(解决"打开时序"问题)============
 //
 // 问题:后端 PTY 一开就推数据,但前端 xterm 可能还没挂载好,

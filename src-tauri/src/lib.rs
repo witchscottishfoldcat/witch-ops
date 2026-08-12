@@ -35,14 +35,17 @@ pub struct AppState {
     pub ssh: SshManager,
     /// 已解锁的 Vault(运行时持有 data key;未解锁时为 None)
     vault: RwLock<Option<Arc<Vault>>>,
+    /// 数据目录路径(sessions JSONL 等文件存放于此)
+    pub data_dir: std::path::PathBuf,
 }
 
 impl AppState {
-    pub fn new(db: SqlitePool) -> Self {
+    pub fn new(db: SqlitePool, data_dir: std::path::PathBuf) -> Self {
         Self {
             db,
             ssh: SshManager::new(),
             vault: RwLock::new(None),
+            data_dir,
         }
     }
 
@@ -190,7 +193,7 @@ pub fn run() {
                         panic!("数据库初始化失败: {e}");
                     }
                 };
-                let state = AppState::new(db);
+                let state = AppState::new(db, data_dir.clone());
                 handle.manage(state);
                 // 终端会话管理器(单独 manage,供 terminal 命令使用)
                 handle.manage(terminal::TerminalManagerHolder(std::sync::Arc::new(
@@ -266,6 +269,13 @@ pub fn run() {
             commands::sftp_stat,
             commands::sftp_download,
             commands::sftp_upload,
+            // Agent 会话持久化
+            commands::create_agent_session,
+            commands::list_agent_sessions,
+            commands::load_agent_messages,
+            commands::append_agent_message,
+            commands::rename_agent_session,
+            commands::delete_agent_session,
             // 运维:监控 / 容器 / systemd
             commands::get_metrics,
             commands::list_containers,

@@ -15,6 +15,7 @@ pub mod knowledge;
 pub mod ops;
 pub mod providers;
 pub mod servers;
+pub mod sessions;
 pub mod sftp;
 pub mod vault;
 
@@ -23,5 +24,6 @@ pub use knowledge::*;
 pub use ops::*;
 pub use providers::*;
 pub use servers::*;
+pub use sessions::*;
 pub use sftp::*;
 pub use vault::*;

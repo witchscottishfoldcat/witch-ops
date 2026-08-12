@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { Bot, Send, Check, X, Sparkles, Terminal, Loader2, AlertCircle, FileText } from 'lucide-react';
 import { AgentSession, loadAgentConfig, loadEnabledSkills, loadAgentServers, AgentToolCall, AgentTurn } from '../lib/agent';
@@ -17,7 +17,7 @@ const READ_ONLY_TOOLS = new Set(['get_metrics', 'read_file', 'get_skill']);
  * - 只读工具(get_metrics / read_file / get_skill):自动执行 → 结果回传 Agent 续轮
  * - 写工具(run_command / write_file):生成提案卡片,人工审批后才执行
  */
-export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
+export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | null }> = ({ compact = false, sessionId = null }) => {
   const {
     skills, servers, activeServerId, executeCommand, providers,
     upsertDoc,
@@ -33,9 +33,45 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
   const turnRef = useRef<Map<string, AgentTurn>>(new Map());
   const msgIdCounter = useRef(0);
   const [showSaveDoc, setShowSaveDoc] = useState(false);
+  const sessionIdRef = useRef<string | null>(null);
+
+  /** 持久化一条消息到后端 JSONL */
+  const persistMessage = useCallback((msg: AgentMessage) => {
+    if (!sessionIdRef.current) return;
+    const stored = {
+      id: msg.id,
+      sender: msg.sender,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      proposal: msg.proposal,
+    };
+    ipc.appendAgentMessage(sessionIdRef.current, stored).catch(e =>
+      console.error('[Agent] 消息持久化失败', e)
+    );
+  }, []);
+
+  /** 更新消息列表,并持久化新增的消息 */
+  const appendMessage = useCallback((msg: AgentMessage) => {
+    setMessages(prev => [...prev, msg]);
+    persistMessage(msg);
+  }, [persistMessage]);
 
   // 唯一消息 ID(避免同毫秒冲突)
   const nextId = (prefix: string) => `${prefix}_${Date.now()}_${msgIdCounter.current++}`;
+
+  /** 将消息最终状态持久化(用 setMessages updater 读最终值,JSONL append;加载时后端按 id 去重) */
+  const finalizeMessage = useCallback((id: string) => {
+    setMessages(prev => {
+      const msg = prev.find(m => m.id === id);
+      if (msg && sessionIdRef.current) {
+        ipc.appendAgentMessage(sessionIdRef.current, {
+          id: msg.id, sender: msg.sender, content: msg.content,
+          timestamp: msg.timestamp, proposal: msg.proposal,
+        }).catch(e => console.error('[Agent] 消息持久化失败', e));
+      }
+      return prev;
+    });
+  }, []);
 
   // 初始化 Agent 会话
   useEffect(() => {
@@ -77,6 +113,31 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
     })();
     return () => { cancelled = true; };
   }, [skills, servers]);
+
+  // 会话切换时:加载历史消息
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+    if (!sessionId) {
+      setMessages([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const stored = await ipc.loadAgentMessages(sessionId);
+        if (cancelled) return;
+        const restored: AgentMessage[] = stored.map(s => ({
+          id: s.id,
+          sender: s.sender as 'user' | 'agent' | 'system',
+          content: s.content,
+          timestamp: s.timestamp,
+          proposal: s.proposal as AgentProposal | undefined,
+        }));
+        setMessages(restored);
+      } catch (e) { console.error('[Agent] 加载历史消息失败', e); }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -140,13 +201,14 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         setMessages(prev => prev.map(m => m.id === resultMsgId ? {
           ...m, content: turn.text || '(分析完成)', streaming: false,
         } : m));
-        // 续轮也可能产生新的工具调用
+        finalizeMessage(resultMsgId);
         dispatchToolCalls(turn, resultMsgId);
       },
       onError: (err: Error) => {
         setMessages(prev => prev.map(m => m.id === resultMsgId ? {
           ...m, content: `错误: ${err.message}`, streaming: false,
         } : m));
+        finalizeMessage(resultMsgId);
         setIsRunning(false);
       },
     };
@@ -158,6 +220,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
       setMessages(prev => prev.map(m => m.id === resultMsgId ? {
         ...m, content: `错误: ${msg}`, streaming: false,
       } : m));
+      finalizeMessage(resultMsgId);
       setIsRunning(false);
     }
   };
@@ -197,6 +260,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
           content: (turn.text || '') + `\n\n⚠ 只读工具 \`${call.name}\` 执行失败: ${msg}`,
           streaming: false,
         } : m));
+        finalizeMessage(agentMsgId);
         setIsRunning(false);
       }
       return;
@@ -210,21 +274,15 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
       const cmd = call.arguments.command;
       if (!sid) {
         setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-          ...m,
-          content: `⚠ Agent 提议缺少有效的目标服务器,已跳过。`,
-          streaming: false,
+          ...m, content: `⚠ Agent 提议缺少有效的目标服务器,已跳过。`, streaming: false,
         } : m));
-        setIsRunning(false);
-        return;
+        finalizeMessage(agentMsgId); setIsRunning(false); return;
       }
       if (typeof cmd !== 'string' || !cmd.trim()) {
         setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-          ...m,
-          content: `⚠ Agent 提议缺少命令内容,已跳过。`,
-          streaming: false,
+          ...m, content: `⚠ Agent 提议缺少命令内容,已跳过。`, streaming: false,
         } : m));
-        setIsRunning(false);
-        return;
+        finalizeMessage(agentMsgId); setIsRunning(false); return;
       }
       const proposalId = `prop_${agentMsgId}`;
       turnRef.current.set(proposalId, turn);
@@ -243,12 +301,9 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
       const content = call.arguments.content;
       if (!sid || typeof path !== 'string' || typeof content !== 'string') {
         setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-          ...m,
-          content: `⚠ Agent 的 write_file 提议参数不完整,已跳过。`,
-          streaming: false,
+          ...m, content: `⚠ Agent 的 write_file 提议参数不完整,已跳过。`, streaming: false,
         } : m));
-        setIsRunning(false);
-        return;
+        finalizeMessage(agentMsgId); setIsRunning(false); return;
       }
       const proposalId = `prop_${agentMsgId}`;
       turnRef.current.set(proposalId, turn);
@@ -263,12 +318,9 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
     } else {
       // 未知写工具
       setMessages(prev => prev.map(m => m.id === agentMsgId ? {
-        ...m,
-        content: `⚠ 不支持的工具: ${call.name},已跳过。`,
-        streaming: false,
+        ...m, content: `⚠ 不支持的工具: ${call.name},已跳过。`, streaming: false,
       } : m));
-      setIsRunning(false);
-      return;
+      finalizeMessage(agentMsgId); setIsRunning(false); return;
     }
 
     setMessages(prev => prev.map(m => m.id === agentMsgId ? {
@@ -277,6 +329,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
       streaming: false,
       proposal,
     } : m));
+    finalizeMessage(agentMsgId);
     setIsRunning(false);
   };
 
@@ -288,7 +341,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
       id: nextId('msg'), sender: 'user', content: inputMsg.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     };
-    setMessages(prev => [...prev, userMsg]);
+    appendMessage(userMsg);  // 用户消息立即持久化
     setInputMsg('');
     setIsRunning(true);
 
@@ -303,7 +356,6 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         onText: (text) => setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: text } : m)),
         onProposal: () => {},
         onDone: (t) => {
-          // 只更新文本内容;工具分发由 dispatchToolCalls 处理
           setMessages(prev => prev.map(m => m.id === agentMsgId ? {
             ...m, content: t.text || '', streaming: false,
           } : m));
@@ -312,16 +364,17 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
           setMessages(prev => prev.map(m => m.id === agentMsgId ? {
             ...m, content: `错误: ${err.message}`, streaming: false,
           } : m));
+          finalizeMessage(agentMsgId);
           setIsRunning(false);
         },
       });
-      // 工具分发(只读自动执行,写操作生成 proposal)
       await dispatchToolCalls(turn, agentMsgId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setMessages(prev => prev.map(m => m.id === agentMsgId ? {
         ...m, content: `错误: ${msg}`, streaming: false,
       } : m));
+      finalizeMessage(agentMsgId);
       setIsRunning(false);
     }
   };
@@ -380,10 +433,12 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
         onProposal: () => {},
         onDone: (t: AgentTurn) => {
           setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: t.text || '(完成)', streaming: false } : m));
+          finalizeMessage(resultMsgId);
           dispatchToolCalls(t, resultMsgId);
         },
         onError: (err: Error) => {
           setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${err.message}`, streaming: false } : m));
+          finalizeMessage(resultMsgId);
           setIsRunning(false);
         },
       };
@@ -397,14 +452,18 @@ export const AgentChatPanel: React.FC<{ compact?: boolean }> = ({ compact = fals
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${msg}`, streaming: false } : m));
+      finalizeMessage(resultMsgId);
       setIsRunning(false);
     }
   };
 
   const handleReject = (proposalId: string) => {
-    setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
-      ...m, proposal: { ...m.proposal!, approved: false }
-    } : m));
+    let msgId = '';
+    setMessages(prev => prev.map(m => {
+      if (m.proposal?.id === proposalId) { msgId = m.id; return { ...m, proposal: { ...m.proposal!, approved: false } }; }
+      return m;
+    }));
+    if (msgId) setTimeout(() => finalizeMessage(msgId), 0);
   };
 
   /** 将当前对话存为复盘文档 */
