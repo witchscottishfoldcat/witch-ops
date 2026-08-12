@@ -118,15 +118,18 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
 
   // 会话切换时:加载历史消息 + 重建 LLM 上下文
   useEffect(() => {
-    sessionIdRef.current = sessionId;
-    if (!sessionId) {
+    // compact 模式(终端右侧面板):没有传入 sessionId 时,
+    // 从 localStorage 恢复上次对话,实现"打开就能看到历史"
+    const effectiveSessionId = sessionId ?? localStorage.getItem('agent_active_session');
+    sessionIdRef.current = effectiveSessionId;
+    if (!effectiveSessionId) {
       setMessages([]);
       return;
     }
     let cancelled = false;
     (async () => {
       try {
-        const stored = await ipc.loadAgentMessages(sessionId);
+        const stored = await ipc.loadAgentMessages(effectiveSessionId);
         if (cancelled) return;
         const restored: AgentMessage[] = stored.map(s => ({
           id: s.id,
