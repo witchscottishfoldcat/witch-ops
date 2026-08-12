@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   FolderTree, Folder, FileText, ChevronRight, HardDrive, RefreshCw, X,
-  FolderPlus, Trash2, Link2, ArrowUp, Check,
+  FolderPlus, Trash2, Link2, ArrowUp, Check, Upload, Download,
 } from 'lucide-react';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import * as ipc from '../lib/ipc';
 import type { DirEntry } from '../types/backend';
 
@@ -45,6 +46,8 @@ export const SftpBrowser: React.FC = () => {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // 请求代际:快速点击不同文件时,丢弃过期响应,防止覆盖编辑内容
   const fileSeqRef = useRef(0);
+  // 文件传输(上传/下载)状态提示
+  const [transferStatus, setTransferStatus] = useState<string | null>(null);
 
   const currentServer = servers.find(s => s.id === activeServerId);
   const pathParts = sftpPath.split('/').filter(Boolean);
@@ -118,6 +121,42 @@ export const SftpBrowser: React.FC = () => {
     finally { setSaving(false); }
   };
 
+  // 上传本地文件到当前远程目录
+  const handleUpload = async () => {
+    if (!activeServerId) return;
+    try {
+      const selected = await openDialog({ multiple: false });
+      if (!selected || typeof selected !== 'string') return;
+      const fileName = selected.split(/[\\/]/).pop() || 'upload';
+      const remotePath = joinPath(sftpPath, fileName);
+      setTransferStatus(`正在上传 ${fileName}…`);
+      await ipc.sftpUpload(activeServerId, selected, remotePath);
+      await refreshSftpFiles();
+    } catch (e) {
+      // 用户取消对话框不报错,其他错误走全局 toast
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('Cancel')) console.error('[SFTP 上传]', e);
+    } finally {
+      setTransferStatus(null);
+    }
+  };
+
+  // 下载远程文件到本地
+  const handleDownload = async (item: DirEntry) => {
+    if (!activeServerId) return;
+    const remotePath = joinPath(sftpPath, item.name);
+    try {
+      const localPath = await saveDialog({ defaultPath: item.name });
+      if (!localPath) return; // 用户取消
+      setTransferStatus(`正在下载 ${item.name}…`);
+      await ipc.sftpDownload(activeServerId, remotePath, localPath);
+    } catch (e) {
+      console.error('[SFTP 下载]', e);
+    } finally {
+      setTransferStatus(null);
+    }
+  };
+
   return (
     <div>
       <div className="page-title-row">
@@ -150,6 +189,15 @@ export const SftpBrowser: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn btn-primary"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={handleUpload}
+            disabled={!activeServerId || !!transferStatus}
+            title="上传本地文件到当前目录"
+          >
+            <Upload size={12} /> 上传
+          </button>
           <button
             className="btn btn-secondary"
             style={{ padding: '4px 10px', fontSize: 12 }}
@@ -250,19 +298,31 @@ export const SftpBrowser: React.FC = () => {
                     {fmtPerm(item.permissions)}
                   </td>
                   <td onClick={e => e.stopPropagation()}>
-                    <button
-                      className="btn btn-secondary"
-                      style={{
-                        padding: '2px 8px', fontSize: 11,
-                        color: confirming ? '#fff' : undefined,
-                        background: confirming ? 'var(--accent-rose)' : undefined,
-                        borderColor: confirming ? 'var(--accent-rose)' : undefined,
-                      }}
-                      onClick={() => handleDelete(item)}
-                      title={confirming ? '再次点击确认删除' : '删除'}
-                    >
-                      <Trash2 size={12} /> {confirming ? '确认删除?' : '删除'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {!item.is_dir && !item.is_symlink && (
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '2px 8px', fontSize: 11 }}
+                          onClick={() => handleDownload(item)}
+                          title="下载到本地"
+                        >
+                          <Download size={12} />
+                        </button>
+                      )}
+                      <button
+                        className="btn btn-secondary"
+                        style={{
+                          padding: '2px 8px', fontSize: 11,
+                          color: confirming ? '#fff' : undefined,
+                          background: confirming ? 'var(--accent-rose)' : undefined,
+                          borderColor: confirming ? 'var(--accent-rose)' : undefined,
+                        }}
+                        onClick={() => handleDelete(item)}
+                        title={confirming ? '再次点击确认删除' : '删除'}
+                      >
+                        <Trash2 size={12} /> {confirming ? '确认删除?' : '删除'}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -321,6 +381,19 @@ export const SftpBrowser: React.FC = () => {
       {loadingFile && (
         <div style={{ position: 'fixed', bottom: 20, right: 20, fontSize: 12, color: 'var(--text-muted)', background: 'var(--apple-popover-bg)', padding: '6px 12px', borderRadius: 8, border: '1px solid var(--apple-border)' }}>
           正在读取文件…
+        </div>
+      )}
+
+      {/* 文件传输中提示 */}
+      {transferStatus && (
+        <div style={{
+          position: 'fixed', bottom: 20, right: 20, fontSize: 12,
+          color: 'var(--accent-cyan)', background: 'var(--apple-popover-bg)',
+          padding: '8px 14px', borderRadius: 8, border: '1px solid var(--accent-cyan)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <Upload size={14} style={{ animation: 'spin 2s linear infinite' }} />
+          {transferStatus}
         </div>
       )}
     </div>

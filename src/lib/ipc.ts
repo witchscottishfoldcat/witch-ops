@@ -101,6 +101,12 @@ export const sftpStat = (serverId: number, path: string) =>
   invoke<{ canonical: string; exists: boolean; is_dir: boolean; size: number }>(
     'sftp_stat', { serverId, path }
   );
+/** 下载远程文件到本地(后端直连 SFTP → 本地磁盘) */
+export const sftpDownload = (serverId: number, remotePath: string, localPath: string) =>
+  invoke<void>('sftp_download', { serverId, remotePath, localPath });
+/** 上传本地文件到远程(后端直连本地磁盘 → SFTP) */
+export const sftpUpload = (serverId: number, localPath: string, remotePath: string) =>
+  invoke<void>('sftp_upload', { serverId, localPath, remotePath });
 
 // ============ 监控 ============
 export const getMetrics = (serverId: number) =>

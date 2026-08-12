@@ -55,3 +55,4 @@ base64 = "0.22"
 hex = "0.4"
 # 异步 trait
 async-trait = "0.1"
+tauri-plugin-dialog = "2.7.2"

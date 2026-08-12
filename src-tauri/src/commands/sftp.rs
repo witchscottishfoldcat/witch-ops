@@ -279,6 +279,93 @@ pub async fn sftp_rename(
     .await
 }
 
+/// 下载远程文件到本地(后端直连:远程 SFTP → 本地磁盘,不经前端 IPC)
+///
+/// local_path 由前端通过 Tauri dialog.save() 获取。
+/// 数据在后端内存中分块流转(64KB chunks),大文件也不会 OOM。
+#[tauri::command]
+pub async fn sftp_download(
+    state: State<'_, AppState>,
+    server_id: i64,
+    remote_path: String,
+    local_path: String,
+) -> AppResult<()> {
+    let args = serde_json::json!({ "remote": remote_path, "local": local_path });
+    audit_sftp_action(&state, server_id, "download", args, async {
+        let sftp = state.ssh.open_sftp(server_id).await?;
+
+        // 拒绝目录下载
+        let meta = sftp.metadata(&remote_path).await
+            .map_err(|e| AppError::Ssh(format!("无法获取远程文件信息: {e}")))?;
+        if meta.is_dir() {
+            return Err(AppError::InvalidInput("远程路径是目录,无法下载为单个文件".into()));
+        }
+
+        // 打开远程文件 + 本地文件
+        let mut remote = sftp.open(&remote_path).await
+            .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {e}")))?;
+        let mut local = tokio::fs::File::create(&local_path).await
+            .map_err(|e| AppError::Internal(format!("创建本地文件失败: {e}")))?;
+
+        // 分块拷贝(64KB / chunk)
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = remote.read(&mut buf).await
+                .map_err(|e| AppError::Ssh(format!("读取远程文件失败: {e}")))?;
+            if n == 0 { break; }
+            local.write_all(&buf[..n]).await
+                .map_err(|e| AppError::Internal(format!("写入本地文件失败: {e}")))?;
+        }
+        local.flush().await.map_err(|e| AppError::Internal(format!("flush 失败: {e}")))?;
+        Ok(())
+    })
+    .await
+}
+
+/// 上传本地文件到远程(后端直连:本地磁盘 → 远程 SFTP,不经前端 IPC)
+///
+/// local_path 由前端通过 Tauri dialog.open() 获取。
+#[tauri::command]
+pub async fn sftp_upload(
+    state: State<'_, AppState>,
+    server_id: i64,
+    local_path: String,
+    remote_path: String,
+) -> AppResult<()> {
+    let args = serde_json::json!({ "local": local_path, "remote": remote_path });
+    audit_sftp_action(&state, server_id, "upload", args, async {
+        // 检查本地文件
+        let local_meta = tokio::fs::metadata(&local_path).await
+            .map_err(|e| AppError::Internal(format!("无法访问本地文件: {e}")))?;
+        if local_meta.is_dir() {
+            return Err(AppError::InvalidInput("本地路径是目录,无法上传为单个文件".into()));
+        }
+
+        let sftp = state.ssh.open_sftp(server_id).await?;
+        use russh_sftp::protocol::OpenFlags;
+        let mut remote = sftp.open_with_flags(
+            &remote_path,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        ).await.map_err(|e| AppError::Ssh(format!("打开远程文件失败: {e}")))?;
+        let mut local = tokio::fs::File::open(&local_path).await
+            .map_err(|e| AppError::Internal(format!("打开本地文件失败: {e}")))?;
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = local.read(&mut buf).await
+                .map_err(|e| AppError::Internal(format!("读取本地文件失败: {e}")))?;
+            if n == 0 { break; }
+            remote.write_all(&buf[..n]).await
+                .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {e}")))?;
+        }
+        remote.flush().await.map_err(|e| AppError::Ssh(format!("flush 失败: {e}")))?;
+        Ok(())
+    })
+    .await
+}
+
 /// 路径信息(规范路径、是否存在)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PathInfo {

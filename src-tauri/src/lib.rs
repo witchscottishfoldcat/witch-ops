@@ -142,6 +142,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // 数据目录:项目文件夹内(随项目走,可迁移/可备份)
             // 优先级:WITCHCAT_DATA_DIR 环境变量 > 项目根目录/data
@@ -263,6 +264,8 @@ pub fn run() {
             commands::sftp_rmdir,
             commands::sftp_rename,
             commands::sftp_stat,
+            commands::sftp_download,
+            commands::sftp_upload,
             // 运维:监控 / 容器 / systemd
             commands::get_metrics,
             commands::list_containers,
