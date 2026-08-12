@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { ServerInput } from '../types/backend';
-import { Server, Plus, Terminal, Power, Tag, Trash2, Eye, EyeOff, X, Lock, KeyRound, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Server, ServerInput } from '../types/backend';
+import { Server as ServerIcon, Plus, Terminal, Power, Tag, Trash2, Eye, EyeOff, X, Lock, KeyRound, ShieldCheck, ShieldAlert, Edit } from 'lucide-react';
 
 /** 安全 JSON 解析:渲染期非法 JSON 返回 null,避免白屏 */
 function safeParse<T>(raw: string | null): T | null {
@@ -12,7 +12,7 @@ function safeParse<T>(raw: string | null): T | null {
 export const ServerManager: React.FC = () => {
   const {
     servers, connectedServerIds, connectServer, disconnectServer,
-    openTerminal, addServer, deleteServer, setActiveServerId, activeServerId, isVaultUnlocked, isVaultInitialized
+    openTerminal, addServer, updateServer, deleteServer, setActiveServerId, activeServerId, isVaultUnlocked, isVaultInitialized
   } = useApp();
 
   const [selectedTag, setSelectedTag] = useState<string>('all');
@@ -20,6 +20,7 @@ export const ServerManager: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   // 两步确认:3 秒后自动复位
   useEffect(() => {
@@ -50,9 +51,15 @@ export const ServerManager: React.FC = () => {
     if (!formData.name || !formData.host) return;
     setSaving(true);
     try {
-      await addServer(formData);
+      if (editingId !== null) {
+        // 编辑模式:credential 留空时后端保留原密码
+        await updateServer(editingId, formData);
+      } else {
+        await addServer(formData);
+      }
       setShowAddModal(false);
       setShowPassword(false);
+      setEditingId(null);
       setFormData({ name: '', host: '', port: 22, username: 'root', auth_method: 'password', credential: '', tags: ['prod'], note: '' });
     } catch {
       // 保存失败时保留弹窗和表单数据,错误已由 context toast 提示
@@ -61,9 +68,34 @@ export const ServerManager: React.FC = () => {
     }
   };
 
+  /** 打开编辑弹窗:把现有服务器数据填入表单(凭证留空,提示保留原值) */
+  const handleEdit = (s: Server) => {
+    const tags: string[] = safeParse<string[]>(s.tags) ?? [];
+    setEditingId(s.id);
+    setFormData({
+      name: s.name,
+      host: s.host,
+      port: s.port,
+      username: s.username,
+      auth_method: s.auth_method as 'password' | 'private_key',
+      credential: '',  // 留空:后端检测到空值时保留原凭证
+      tags: tags.length > 0 ? tags : ['prod'],
+      note: s.note ?? '',
+    });
+    setShowAddModal(true);
+  };
+
+  /** 打开新增弹窗 */
+  const handleAdd = () => {
+    setEditingId(null);
+    setFormData({ name: '', host: '', port: 22, username: 'root', auth_method: 'password', credential: '', tags: ['prod'], note: '' });
+    setShowAddModal(true);
+  };
+
   const closeModal = () => {
     setShowAddModal(false);
     setShowPassword(false);
+    setEditingId(null);
   };
 
   // 苹果风表单标签样式
@@ -81,12 +113,12 @@ export const ServerManager: React.FC = () => {
       <div className="page-title-row">
         <div>
           <h2 className="page-title">
-            <Server size={24} style={{ color: 'var(--accent-purple)' }} />
+            <ServerIcon size={24} style={{ color: 'var(--accent-purple)' }} />
             服务器管理 (Servers & Nodes)
           </h2>
           <p className="page-subtitle">管理与连接底层 SSH 节点，支持加密凭证与指纹防护，一键调起 PTY 交互流与 Agent 运维。</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+        <button className="btn btn-primary" onClick={handleAdd}>
           <Plus size={16} /> 添加服务器节点
         </button>
       </div>
@@ -135,26 +167,36 @@ export const ServerManager: React.FC = () => {
                   </div>
                 </div>
 
-                <button
-                  className="btn btn-secondary"
-                  style={{
-                    padding: 6, borderRadius: '50%',
-                    color: confirming ? '#fff' : undefined,
-                    background: confirming ? 'var(--accent-rose)' : undefined,
-                    borderColor: confirming ? 'var(--accent-rose)' : undefined,
-                  }}
-                  onClick={() => {
-                    if (confirming) {
-                      setConfirmDeleteId(null);
-                      deleteServer(s.id);
-                    } else {
-                      setConfirmDeleteId(s.id);
-                    }
-                  }}
-                  title={confirming ? '再次点击确认删除(含凭证)' : '删除服务器'}
-                >
-                  <Trash2 size={14} style={{ color: confirming ? '#fff' : 'var(--text-dim)' }} />
-                </button>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: 6, borderRadius: '50%' }}
+                    onClick={() => handleEdit(s)}
+                    title="编辑服务器"
+                  >
+                    <Edit size={14} style={{ color: 'var(--text-dim)' }} />
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{
+                      padding: 6, borderRadius: '50%',
+                      color: confirming ? '#fff' : undefined,
+                      background: confirming ? 'var(--accent-rose)' : undefined,
+                      borderColor: confirming ? 'var(--accent-rose)' : undefined,
+                    }}
+                    onClick={() => {
+                      if (confirming) {
+                        setConfirmDeleteId(null);
+                        deleteServer(s.id);
+                      } else {
+                        setConfirmDeleteId(s.id);
+                      }
+                    }}
+                    title={confirming ? '再次点击确认删除(含凭证)' : '删除服务器'}
+                  >
+                    <Trash2 size={14} style={{ color: confirming ? '#fff' : 'var(--text-dim)' }} />
+                  </button>
+                </div>
               </div>
 
               {/* Tags */}
@@ -233,7 +275,9 @@ export const ServerManager: React.FC = () => {
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ width: 520 }}>
             {/* 标题栏 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>添加 SSH 服务器节点</h3>
+              <h3 style={{ fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>
+                {editingId !== null ? '编辑 SSH 服务器节点' : '添加 SSH 服务器节点'}
+              </h3>
               <button
                 type="button"
                 onClick={closeModal}
@@ -351,13 +395,18 @@ export const ServerManager: React.FC = () => {
               {/* 凭证:按认证方式区分输入形式 */}
               {formData.auth_method === 'password' ? (
                 <div>
-                  <label style={labelStyle}>登录密码</label>
+                  <label style={labelStyle}>
+                    登录密码
+                    {editingId !== null && (
+                      <span style={{ color: 'var(--apple-text-dim)', fontWeight: 400 }}> (留空保留原密码)</span>
+                    )}
+                  </label>
                   <div style={{ position: 'relative' }}>
                     <input
                       type={showPassword ? 'text' : 'password'}
                       className="input-field"
-                      placeholder="输入密码(将以 AES-GCM-256 加密存入 Vault)"
-                      required
+                      placeholder={editingId !== null ? '留空则保留原密码' : '输入密码(将以 AES-GCM-256 加密存入 Vault)'}
+                      required={editingId === null}
                       value={formData.credential}
                       onChange={e => setFormData({ ...formData, credential: e.target.value })}
                       style={{ paddingRight: 40 }}
@@ -374,12 +423,17 @@ export const ServerManager: React.FC = () => {
                 </div>
               ) : (
                 <div>
-                  <label style={labelStyle}>PEM 私钥</label>
+                  <label style={labelStyle}>
+                    PEM 私钥
+                    {editingId !== null && (
+                      <span style={{ color: 'var(--apple-text-dim)', fontWeight: 400 }}> (留空保留原私钥)</span>
+                    )}
+                  </label>
                   <textarea
                     className="input-field"
                     rows={4}
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;(粘贴完整私钥内容,将加密存入 Vault)"
-                    required
+                    placeholder={editingId !== null ? '留空则保留原私钥' : '-----BEGIN OPENSSH PRIVATE KEY-----\n(粘贴完整私钥内容,将加密存入 Vault)'}
+                    required={editingId === null}
                     value={formData.credential}
                     onChange={e => setFormData({ ...formData, credential: e.target.value })}
                     style={{ fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }}
@@ -401,7 +455,7 @@ export const ServerManager: React.FC = () => {
               {/* 操作按钮 */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8, paddingTop: 16, borderTop: '1px solid var(--apple-border)' }}>
                 <button type="button" className="btn btn-secondary" onClick={closeModal} disabled={saving}>取消</button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? '保存中…' : '保存节点'}</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? '保存中…' : (editingId !== null ? '保存修改' : '保存节点')}</button>
               </div>
             </form>
           </div>
