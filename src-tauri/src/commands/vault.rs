@@ -42,9 +42,16 @@ async fn migrate_plaintext_secrets(state: &AppState) {
     };
 
     // (表名, 主键列, 敏感列, 主键是否字符串)
-    let targets: [(&str, &str, &str, bool); 2] = [
+    //
+    // 覆盖所有走 seal_secret/open_secret 同一套前缀格式(plain:/enc:v1:)的敏感列。
+    // saved_credentials.secret_enc 与 mcp_servers.env_enc 目前后端尚无写入点,
+    // 但 vault::reset_all 将其作为密文列一并清空、schema 注释也标注为整体加密,
+    // 格式与上面两列一致,一并纳入迁移以覆盖历史数据。
+    let targets: [(&str, &str, &str, bool); 4] = [
         ("servers", "id", "credential_enc", false),
         ("agent_providers", "id", "api_key_enc", true),
+        ("saved_credentials", "id", "secret_enc", false),
+        ("mcp_servers", "id", "env_enc", true),
     ];
 
     for (table, pk, col, pk_is_str) in targets {

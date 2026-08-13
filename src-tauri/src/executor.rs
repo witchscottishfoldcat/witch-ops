@@ -10,7 +10,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::ssh::{CommandResult, SshManager};
 
 /// 审计日志记录的输入(执行上下文)
@@ -76,7 +76,8 @@ pub async fn execute_and_audit(
 ) -> AppResult<(CommandResult, i64)> {
     let start = std::time::Instant::now();
 
-    log::info!(
+    // debug 级:命令串可能内嵌密码/令牌等敏感信息,不能进 info 日志
+    log::debug!(
         "[audit] 执行 server={server_id} tool={} source={} cmd={:?}",
         ctx.tool_name,
         ctx.source,
@@ -96,7 +97,8 @@ pub async fn execute_and_audit(
         Err(e) => (false, None, Some(e.to_string()), truncate_output(&e.to_string())),
     };
 
-    // 写审计日志
+    // 写审计日志(fail-closed:命令已经执行,审计却写不进去时,
+    // 宁可让调用方拿到明确的错误,也不能静默返回一个无审计的执行结果)
     let timestamp = Utc::now().to_rfc3339();
     let audit_id = match write_audit_log(
         db,
@@ -119,12 +121,15 @@ pub async fn execute_and_audit(
     {
         Ok(id) => id,
         Err(e) => {
-            // 审计失败不应吞掉已执行的命令结果:
-            // 命令确实执行了,降级返回结果并显式告警(审计缺口可查)
             log::error!(
                 "审计日志写入失败(命令已执行,server={server_id}): {e}"
             );
-            -1
+            return Err(AppError::Internal(format!(
+                "命令已在服务器 {server_id} 上执行,但审计日志写入失败: {e}\
+                 (exit_code={}, output={}),请人工核对审计缺口",
+                exit_code.map(|c| c.to_string()).unwrap_or_else(|| "无".into()),
+                truncated_output
+            )));
         }
     };
 

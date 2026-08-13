@@ -77,21 +77,20 @@ pub async fn update_server(
 ) -> AppResult<()> {
     input.validate()?;
 
-    // 如果提供了非空新凭证,重新加密;
-    // None 或空串(表单未改动)一律保留原值,绝不静默清空已存凭证
+    // 读旧值:① 用于连接参数变更检测(变更后须断开旧会话);
+    // ② 旧 credential_enc 交给 SQL 的 COALESCE 保留,不再"读-改-写"
+    let old = sqlx::query_as::<_, Server>("SELECT * FROM servers WHERE id = ?")
+        .bind(id)
+        .fetch_optional(state.db())
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("服务器 {id}")))?;
+
+    // 提供非空新凭证才重新加密;None 或空串(表单未改动)→ 传 NULL,
+    // 由 UPDATE 里的 COALESCE(?, credential_enc) 保留库中原值。
+    // 单条 UPDATE 原子完成,避免并发 vault_reset 清空密文后又被这里的旧值写回。
     let credential_enc = match input.credential.as_deref() {
         Some(cred) if !cred.is_empty() => Some(state.seal_secret(cred).await?),
-        _ => {
-            // 不改凭证:查原值
-            use sqlx::Row;
-            let row =
-                sqlx::query("SELECT credential_enc FROM servers WHERE id = ?")
-                    .bind(id)
-                    .fetch_optional(state.db())
-                    .await?;
-            row.and_then(|r| r.try_get::<Option<String>, _>("credential_enc").ok())
-                .flatten()
-        }
+        _ => None,
     };
 
     let tags_json = input
@@ -101,7 +100,7 @@ pub async fn update_server(
 
     sqlx::query(
         "UPDATE servers SET name=?, host=?, port=?, username=?, auth_method=?,
-         credential_enc=?, tags=?, note=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         credential_enc=COALESCE(?, credential_enc), tags=?, note=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE id=?",
     )
     .bind(&input.name)
@@ -115,6 +114,19 @@ pub async fn update_server(
     .bind(id)
     .execute(state.db())
     .await?;
+
+    // 连接目标或凭证变化 → 断开缓存会话:防止命令继续打到旧主机,而审计却记新主机。
+    // 注意凭证变化用 credential_enc.is_some() 判断(即"本次确实提供了新凭证"),
+    // 不能与 old.credential_enc 直接比较:未提供时这里是 None 而库中恒为 Some(密文),
+    // 直接比较会导致任何一次编辑(哪怕只改备注)都误断开会话。
+    let target_changed = old.host != input.host
+        || old.port != input.port
+        || old.username != input.username
+        || old.auth_method != input.auth_method
+        || credential_enc.is_some();
+    if target_changed {
+        state.ssh.disconnect(id).await.ok();
+    }
 
     Ok(())
 }
@@ -186,12 +198,18 @@ pub async fn connect_server(state: State<'_, AppState>, id: i64) -> AppResult<St
 }
 
 /// 确认 host key 指纹(首连后用户确认,存入数据库)
+///
+/// 安全要求:前端提交的指纹必须与活动连接**实际捕获**的指纹一致才落库;
+/// 无活动连接直接报错(不能盲目持久化任意字符串,重连会重新按库中指纹校验)。
 #[tauri::command]
 pub async fn confirm_host_key(
     state: State<'_, AppState>,
     id: i64,
     fingerprint: String,
 ) -> AppResult<()> {
+    // 先比对活动连接的实际指纹:不一致或无连接都在这里返回错误,不落库
+    state.ssh.confirm_host_key(id, &fingerprint).await?;
+
     sqlx::query(
         "UPDATE servers SET host_key_fingerprint=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
     )

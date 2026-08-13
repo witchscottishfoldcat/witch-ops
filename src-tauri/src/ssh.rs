@@ -41,7 +41,19 @@ pub struct SshManager {
     /// (russh Handle 的 channel_open_session 需要 &mut self),
     /// 但**不同服务器之间完全并行** —— 旧实现是全局单锁,
     /// 一台服务器跑长命令会阻塞所有服务器的全部操作。
-    sessions: Mutex<HashMap<i64, Arc<Mutex<russh::client::Handle<ClientHandler>>>>>,
+    sessions: Mutex<HashMap<i64, Arc<Mutex<SshSession>>>>,
+}
+
+/// 一条已建立的 SSH 会话
+struct SshSession {
+    /// russh 连接句柄
+    handle: russh::client::Handle<ClientHandler>,
+    /// 本次连接实际捕获到的 host key 指纹(check_server_key 回调写入)
+    actual_fingerprint: String,
+    /// 本连接是否已通过 host key 确认:
+    /// - 连接时与库中期望指纹一致 → true(后续连接免再次确认)
+    /// - 首连(库中无期望指纹)→ false,必须等用户 confirm_host_key 后才放行命令
+    confirmed: bool,
 }
 
 /// 客户端 Handler(处理服务器事件,主要是 host key 校验)
@@ -121,7 +133,7 @@ impl SshManager {
         expected_fingerprint: Option<String>,
     ) -> AppResult<String> {
         let config = client_config();
-        let (handler, actual_fp) = ClientHandler::new(expected_fingerprint);
+        let (handler, actual_fp) = ClientHandler::new(expected_fingerprint.clone());
         let addrs = (host, port);
 
         let mut session = client::connect(config, addrs, handler)
@@ -138,12 +150,18 @@ impl SshManager {
             return Err(AppError::Ssh("用户名或密码错误".into()));
         }
 
-        self.sessions
-            .lock()
-            .await
-            .insert(server_id, Arc::new(Mutex::new(session)));
-
         let fp = actual_fp.lock().await.clone().unwrap_or_default();
+        // 仅在本次连接实际指纹与库中期望指纹一致时才视为"已确认"
+        let confirmed = !fp.is_empty() && expected_fingerprint.as_deref() == Some(fp.as_str());
+        self.sessions.lock().await.insert(
+            server_id,
+            Arc::new(Mutex::new(SshSession {
+                handle: session,
+                actual_fingerprint: fp.clone(),
+                confirmed,
+            })),
+        );
+
         log::info!("已连接到服务器 {server_id} ({host}:{port})");
         Ok(fp)
     }
@@ -160,7 +178,7 @@ impl SshManager {
         expected_fingerprint: Option<String>,
     ) -> AppResult<String> {
         let config = client_config();
-        let (handler, actual_fp) = ClientHandler::new(expected_fingerprint);
+        let (handler, actual_fp) = ClientHandler::new(expected_fingerprint.clone());
         let addrs = (host, port);
 
         let mut session = client::connect(config, addrs, handler)
@@ -188,12 +206,18 @@ impl SshManager {
             return Err(AppError::Ssh("私钥认证失败".into()));
         }
 
-        self.sessions
-            .lock()
-            .await
-            .insert(server_id, Arc::new(Mutex::new(session)));
-
         let fp = actual_fp.lock().await.clone().unwrap_or_default();
+        // 仅在本次连接实际指纹与库中期望指纹一致时才视为"已确认"
+        let confirmed = !fp.is_empty() && expected_fingerprint.as_deref() == Some(fp.as_str());
+        self.sessions.lock().await.insert(
+            server_id,
+            Arc::new(Mutex::new(SshSession {
+                handle: session,
+                actual_fingerprint: fp.clone(),
+                confirmed,
+            })),
+        );
+
         log::info!("已连接到服务器 {server_id} ({host}:{port}) via 私钥");
         Ok(fp)
     }
@@ -204,10 +228,36 @@ impl SshManager {
         if let Some(session) = session {
             let session = session.lock().await;
             let _ = session
+                .handle
                 .disconnect(Disconnect::ByApplication, "", "English")
                 .await;
             log::info!("已断开服务器 {server_id}");
         }
+        Ok(())
+    }
+
+    /// 用户确认 host key(首连确认流程)。
+    ///
+    /// 前端提交的指纹必须与**本次连接实际捕获的指纹**一致才置为已确认;
+    /// 不一致或无活动连接均报错,调用方(confirm_host_key 命令)不得落库。
+    pub async fn confirm_host_key(&self, server_id: i64, fingerprint: &str) -> AppResult<()> {
+        let session = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&server_id)
+                .cloned()
+                .ok_or_else(|| AppError::NotConnected(server_id))?
+        };
+
+        let mut s = session.lock().await;
+        if s.actual_fingerprint != fingerprint {
+            return Err(AppError::Ssh(format!(
+                "主机密钥指纹不匹配:前端提交 {fingerprint},本次连接实际为 {}",
+                s.actual_fingerprint
+            )));
+        }
+        s.confirmed = true;
+        log::info!("服务器 {server_id} host key 已由用户确认");
         Ok(())
     }
 
@@ -234,7 +284,9 @@ impl SshManager {
         // 同一连接的命令天然串行;channel 打开后即独立于 handle)
         let mut channel = {
             let session = session.lock().await;
+            ensure_confirmed(server_id, &session)?;
             session
+                .handle
                 .channel_open_session()
                 .await
                 .map_err(|e| AppError::Ssh(format!("打开 channel 失败: {e}")))?
@@ -311,7 +363,9 @@ impl SshManager {
         };
 
         let session = session.lock().await;
+        ensure_confirmed(server_id, &session)?;
         let channel = session
+            .handle
             .channel_open_session()
             .await
             .map_err(|e| AppError::Ssh(format!("打开 channel 失败: {e}")))?;
@@ -346,7 +400,9 @@ impl SshManager {
         };
 
         let session = session.lock().await;
+        ensure_confirmed(server_id, &session)?;
         let channel = session
+            .handle
             .channel_open_session()
             .await
             .map_err(|e| AppError::Ssh(format!("打开 channel 失败: {e}")))?;
@@ -397,6 +453,17 @@ impl CommandResult {
 }
 
 // ==================== 辅助函数 ====================
+
+/// 主机密钥未确认的连接禁止执行任何操作(命令/PTY/SFTP),
+/// 防止在可能被中间人的连接上运行命令。
+fn ensure_confirmed(server_id: i64, session: &SshSession) -> AppResult<()> {
+    if !session.confirmed {
+        return Err(AppError::Ssh(format!(
+            "服务器 {server_id} 主机密钥未确认,已拒绝执行(首次连接需先确认指纹)"
+        )));
+    }
+    Ok(())
+}
 
 /// 计算 host key 指纹(SHA256,OpenSSH 格式 "SHA256:...")
 fn fingerprint_of(pk: &PublicKey) -> String {

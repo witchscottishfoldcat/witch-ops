@@ -41,6 +41,9 @@ struct TerminalSession {
     tx: mpsc::UnboundedSender<TerminalCmd>,
     /// task 句柄(用于等待结束)
     _task: JoinHandle<()>,
+    /// 会话令牌:task 退出清理时只删除与自己令牌一致的条目,
+    /// 防止同 id 并发打开时旧 task 的清理误删新会话
+    token: Arc<()>,
 }
 
 /// 终端会话管理器(存 AppState)
@@ -72,22 +75,46 @@ impl TerminalManager {
             format!("term_{}", uuid::Uuid::new_v4().simple())
         });
 
+        // 防重复:id 已存在则报错,而不是覆盖会话表条目。
+        // 覆盖会让旧 task 的退出清理把新会话的条目删掉,导致新终端失联。
+        {
+            let sessions = self.sessions.lock().await;
+            if sessions.contains_key(&terminal_id) {
+                return Err(AppError::InvalidInput(format!(
+                    "终端 {terminal_id} 已存在,拒绝重复打开"
+                )));
+            }
+        }
+
         // 开 PTY channel(所有权转移给 task)
         let channel = ssh.open_pty(server_id, cols, rows, "xterm-256color").await?;
 
         let (tx, mut rx) = mpsc::unbounded_channel::<TerminalCmd>();
         let id_for_task = terminal_id.clone();
         let app_for_task = app.clone();
+        let token = Arc::new(());
+        let token_for_task = token.clone();
 
         // 读 channel 输出 + 处理指令的 task
         let task = tokio::spawn(async move {
-            run_terminal_loop(id_for_task, app_for_task, channel, &mut rx).await;
+            run_terminal_loop(id_for_task, app_for_task, token_for_task, channel, &mut rx).await;
         });
 
-        self.sessions.lock().await.insert(
-            terminal_id.clone(),
-            TerminalSession { tx, _task: task },
-        );
+        // 插入前在同一把锁内再次检查(覆盖并发打开同 id 的竞争);
+        // 若期间被抢占,关闭刚开的 PTY task 并报错,绝不留孤儿覆盖条目
+        {
+            let mut sessions = self.sessions.lock().await;
+            if sessions.contains_key(&terminal_id) {
+                let _ = tx.send(TerminalCmd::Close);
+                return Err(AppError::InvalidInput(format!(
+                    "终端 {terminal_id} 已存在,拒绝重复打开"
+                )));
+            }
+            sessions.insert(
+                terminal_id.clone(),
+                TerminalSession { tx, _task: task, token },
+            );
+        }
 
         log::info!("终端 {terminal_id} 已打开(server={server_id})");
         Ok(terminal_id)
@@ -136,6 +163,7 @@ impl TerminalManager {
 async fn run_terminal_loop(
     terminal_id: String,
     app: AppHandle,
+    token: Arc<()>,
     mut channel: russh::Channel<russh::client::Msg>,
     rx: &mut mpsc::UnboundedReceiver<TerminalCmd>,
 ) {
@@ -204,12 +232,20 @@ async fn run_terminal_loop(
     }
 
     // 清理:从会话表移除自己(task 结束说明 channel 已关)
+    // 只删除与自身令牌一致的条目:并发打开同 id 时,旧 task 不得误删新会话的条目
     let id = terminal_id.clone();
     let app_clone = app.clone();
     tokio::spawn(async move {
         if let Some(tm) = app_clone.try_state::<TerminalManagerHolder>() {
-            tm.0.sessions.lock().await.remove(&id);
-            log::debug!("终端 {id} 已从会话表移除");
+            let mut sessions = tm.0.sessions.lock().await;
+            let owns_entry = sessions
+                .get(&id)
+                .map(|s| Arc::ptr_eq(&s.token, &token))
+                .unwrap_or(false);
+            if owns_entry {
+                sessions.remove(&id);
+                log::debug!("终端 {id} 已从会话表移除");
+            }
         }
     });
 

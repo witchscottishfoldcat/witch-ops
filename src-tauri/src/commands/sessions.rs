@@ -44,8 +44,36 @@ fn sessions_dir(data_dir: &PathBuf) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
-/// JSONL 文件路径
+/// JSONL 文件全局写锁:所有会话文件的创建/追加/删除都串行化,
+/// 防止并发 append 交错产生 `{..}{..}` 坏行,以及 append 与 delete 竞争。
+/// 会话写入是低频路径,一把全局锁足够。
+static JSONL_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// 校验 session_id 格式。
+///
+/// `create_agent_session` 生成的 id 恒为 `sess_` + UUID 简单形式(32 位小写十六进制),
+/// 即 `^sess_[0-9a-f]{32}$`。session_id 来自前端,直接拼进文件路径,
+/// 必须严格校验以防 `../` 穿越 `data/sessions` 目录。
+fn validate_session_id(session_id: &str) -> AppResult<()> {
+    let valid = session_id
+        .strip_prefix("sess_")
+        .map(|rest| {
+            rest.len() == 32
+                && rest.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+        .unwrap_or(false);
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::InvalidInput(format!(
+            "非法会话 ID: {session_id}(必须是 sess_ + 32 位十六进制)"
+        )))
+    }
+}
+
+/// JSONL 文件路径(内部再校验一次 id,纵深防御)
 fn transcript_path(data_dir: &PathBuf, session_id: &str) -> AppResult<PathBuf> {
+    validate_session_id(session_id)?;
     Ok(sessions_dir(data_dir)?.join(format!("{session_id}.jsonl")))
 }
 
@@ -75,8 +103,9 @@ pub async fn create_agent_session(
     .execute(state.db())
     .await?;
 
-    // 创建空 JSONL 文件
+    // 创建空 JSONL 文件(持锁,与 append/delete 串行,防竞争)
     let path = transcript_path(&state.data_dir, &id)?;
+    let _guard = JSONL_WRITE_LOCK.lock().await;
     tokio::fs::File::create(&path).await
         .map_err(|e| AppError::Internal(format!("创建会话文件失败: {e}")))?;
 
@@ -102,6 +131,7 @@ pub async fn load_agent_messages(
     state: State<'_, AppState>,
     session_id: String,
 ) -> AppResult<Vec<StoredMessage>> {
+    validate_session_id(&session_id)?;
     let path = transcript_path(&state.data_dir, &session_id)?;
     let mut file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
@@ -144,12 +174,16 @@ pub async fn append_agent_message(
     session_id: String,
     message: StoredMessage,
 ) -> AppResult<()> {
+    validate_session_id(&session_id)?;
     let path = transcript_path(&state.data_dir, &session_id)?;
 
-    // 序列化为一行 JSON + 换行
+    // 序列化为一行 JSON
     let line = serde_json::to_string(&message)
         .map_err(|e| AppError::Internal(format!("消息序列化失败: {e}")))?;
 
+    // 持全局锁:open + write 必须原子,否则并发 append 会交错成 `{..}{..}` 坏行;
+    // 也防止 delete 在 open 之后把文件删掉
+    let _guard = JSONL_WRITE_LOCK.lock().await;
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -157,12 +191,16 @@ pub async fn append_agent_message(
         .await
         .map_err(|e| AppError::Internal(format!("打开会话文件失败: {e}")))?;
 
-    file.write_all(line.as_bytes()).await
+    // JSON 行 + 换行拼进同一个缓冲区,单次 write_all 写入(原子性依赖 O_APPEND
+    // 的每次 write 完整落盘;两次独立 write 之间可能被其他 append 插入)
+    let line_len = line.len();
+    let mut buf = line.into_bytes();
+    buf.push(b'\n');
+    file.write_all(&buf).await
         .map_err(|e| AppError::Internal(format!("写入会话失败: {e}")))?;
-    file.write_all(b"\n").await
-        .map_err(|e| AppError::Internal(format!("写入换行失败: {e}")))?;
+    drop(_guard);
 
-    log::info!("[session] 追加消息到 {session_id}: {} ({}字节)", message.id, line.len());
+    log::info!("[session] 追加消息到 {session_id}: {} ({}字节)", message.id, line_len);
 
     // 更新会话的 updated_at
     sqlx::query("UPDATE agent_sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
@@ -194,13 +232,50 @@ pub async fn delete_agent_session(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<()> {
+    validate_session_id(&id)?;
     sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
         .bind(&id)
         .execute(state.db())
         .await?;
 
     let path = transcript_path(&state.data_dir, &id)?;
+    // 持锁删除:与并发 append 的 open+write 串行,避免"先删除、append 又重建文件"的僵尸会话
+    let _guard = JSONL_WRITE_LOCK.lock().await;
     let _ = tokio::fs::remove_file(&path).await; // 文件不存在不算错误
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_id_accepts_generated_format() {
+        assert!(validate_session_id("sess_0123456789abcdef0123456789abcdef").is_ok());
+    }
+
+    #[test]
+    fn session_id_rejects_path_traversal() {
+        assert!(validate_session_id("../evil").is_err());
+        assert!(validate_session_id("sess_../../etc/passwd").is_err());
+        assert!(validate_session_id("..\\..\\windows\\x.jsonl").is_err());
+    }
+
+    #[test]
+    fn session_id_rejects_absolute_paths() {
+        assert!(validate_session_id("/etc/passwd").is_err());
+        assert!(validate_session_id("C:\\Windows\\system32\\x.jsonl").is_err());
+        assert!(validate_session_id("D:/ADM/foo.jsonl").is_err());
+    }
+
+    #[test]
+    fn session_id_rejects_malformed_ids() {
+        // 大写十六进制、长度错误、非法字符、缺前缀
+        assert!(validate_session_id("sess_0123456789ABCDEF0123456789ABCDEF").is_err());
+        assert!(validate_session_id("sess_abc").is_err());
+        assert!(validate_session_id("sess_0123456789abcdef0123456789abcdef0").is_err());
+        assert!(validate_session_id("0123456789abcdef0123456789abcdef").is_err());
+        assert!(validate_session_id("").is_err());
+    }
 }
