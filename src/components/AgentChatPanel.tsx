@@ -37,28 +37,35 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
   const sessionIdRef = useRef<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
-  /** 手动切换到指定会话(compact 模式用) */
-  const switchSession = async (id: string) => {
-    sessionIdRef.current = id;
-    localStorage.setItem('agent_active_session', id);
-    setShowHistory(false);
-    try {
-      const stored = await ipc.loadAgentMessages(id);
-      const restored: AgentMessage[] = stored.map(s => ({
-        id: s.id,
-        sender: s.sender as 'user' | 'agent' | 'system',
-        content: s.content,
-        timestamp: s.timestamp,
-        proposal: s.proposal as AgentProposal | undefined,
-      }));
-      setMessages(restored);
-      sessionRef.current?.restoreHistory(restored);
-    } catch { /* */ }
-  };
+  // messagesRef 始终镜像最新消息数组:finalize 时从这里同步读取最终内容,
+  // 不依赖 setState updater(updater 必须是纯函数,且组件卸载后不会再执行)
+  const messagesRef = useRef<AgentMessage[]>([]);
+  // 消息写入版本号:用于检测「加载历史期间有新消息写入」,避免 load 结果覆盖新消息
+  const messagesVersionRef = useRef(0);
 
-  /** 持久化一条消息到后端 JSONL */
+  /** 统一的消息列表更新入口:同步维护 ref,再交给 state 触发渲染 */
+  const updateMessages = useCallback((next: AgentMessage[]) => {
+    messagesVersionRef.current++;
+    messagesRef.current = next;
+    setMessages(next);
+  }, []);
+
+  // JSONL append 串行化链:后端 append 是「写一行 JSON + 写换行」两次写操作,
+  // 并发 append 会把两行交错成 {...}{...} 损坏行 → 所有 append 排队依次执行
+  const appendChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  // 幂等持久化记录:消息 id → 已落盘的内容快照(JSON)。
+  // 持久化策略:内容变化才 append,而不是「每个 id 至多 append 一次」。
+  // 依据:后端 load 时按 id 去重且保留最后一条 → 内容变化时再次 append 会让
+  // 「最终内容」胜出(例如 onDone 之后 dispatchToolCalls 又补上 proposal、
+  // handleReject 更新 approved 状态);内容未变则直接跳过,绝不重复 append,
+  // 同时消除了 StrictMode/重复 finalize 造成的同一消息写两遍的问题。
+  const lastPersistedRef = useRef<Map<string, string>>(new Map());
+
+  /** 持久化一条消息到后端 JSONL(进串行队列,避免并发写交错) */
   const persistMessage = useCallback((msg: AgentMessage) => {
-    if (!sessionIdRef.current) return;
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
     const stored = {
       id: msg.id,
       sender: msg.sender,
@@ -66,59 +73,106 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       timestamp: msg.timestamp,
       proposal: msg.proposal,
     };
-    ipc.appendAgentMessage(sessionIdRef.current, stored).catch(e =>
-      ipc.frontendLog(`[AgentPanel] persist 失败: ${e}`)
-    );
+    appendChainRef.current = appendChainRef.current
+      .then(() => ipc.appendAgentMessage(sessionId, stored))
+      .catch(e => ipc.frontendLog(`[AgentPanel] persist 失败: ${e}`));
   }, []);
 
   /** 更新消息列表,并持久化新增的消息 */
   const appendMessage = useCallback((msg: AgentMessage) => {
-    setMessages(prev => [...prev, msg]);
+    updateMessages([...messagesRef.current, msg]);
     persistMessage(msg);
-  }, [persistMessage]);
+  }, [persistMessage, updateMessages]);
 
   // 唯一消息 ID(避免同毫秒冲突)
   const nextId = (prefix: string) => `${prefix}_${Date.now()}_${msgIdCounter.current++}`;
 
-  /** 将消息最终状态持久化(用 setMessages updater 读最终值,JSONL append;加载时后端按 id 去重) */
+  /** 将消息最终状态持久化(从 messagesRef 同步读最终内容;内容未变则幂等跳过) */
   const finalizeMessage = useCallback((id: string) => {
-    setMessages(prev => {
-      const msg = prev.find(m => m.id === id);
-      if (msg && sessionIdRef.current) {
-        ipc.appendAgentMessage(sessionIdRef.current, {
-          id: msg.id, sender: msg.sender, content: msg.content,
-          timestamp: msg.timestamp, proposal: msg.proposal,
-        }).catch(e => console.error('[Agent] 消息持久化失败', e));
-      }
-      return prev;
-    });
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    const msg = messagesRef.current.find(m => m.id === id);
+    if (!msg) return;
+    const key = JSON.stringify([msg.content, msg.proposal ?? null]);
+    if (lastPersistedRef.current.get(id) === key) return; // 与已落盘内容一致:跳过
+    lastPersistedRef.current.set(id, key);
+    appendChainRef.current = appendChainRef.current
+      .then(() => ipc.appendAgentMessage(sessionId, {
+        id: msg.id, sender: msg.sender, content: msg.content,
+        timestamp: msg.timestamp, proposal: msg.proposal,
+      }))
+      .catch(e => console.error('[Agent] 消息持久化失败', e));
   }, []);
+
+  /** 把仍在流式的消息按当前内容快照持久化(会话切换/面板卸载前的兜底) */
+  const finalizeUnfinished = useCallback(() => {
+    for (const m of messagesRef.current) {
+      if (m.streaming) finalizeMessage(m.id);
+    }
+  }, [finalizeMessage]);
+
+  /** 手动切换到指定会话(compact 模式用) */
+  const switchSession = async (id: string) => {
+    // 切换前:此时 sessionIdRef 还是旧会话,先把旧会话里仍在流式的消息
+    // 按当前内容快照持久化,防止流式中途切换导致旧会话消息丢失
+    finalizeUnfinished();
+    sessionIdRef.current = id;
+    localStorage.setItem('agent_active_session', id);
+    setShowHistory(false);
+    try {
+      const versionAtLoad = messagesVersionRef.current;
+      const stored = await ipc.loadAgentMessages(id);
+      // 加载期间用户又切了别的会话,或在该会话里发出了新消息:丢弃过期结果,不覆盖
+      if (sessionIdRef.current !== id) return;
+      if (messagesVersionRef.current !== versionAtLoad) return;
+      const restored: AgentMessage[] = stored.map(s => ({
+        id: s.id,
+        sender: s.sender as 'user' | 'agent' | 'system',
+        content: s.content,
+        timestamp: s.timestamp,
+        proposal: s.proposal as AgentProposal | undefined,
+      }));
+      // 新会话:清空幂等记录,恢复出来的消息若被更新(如审批/拒绝)允许再次落盘
+      lastPersistedRef.current.clear();
+      updateMessages(restored);
+      sessionRef.current?.restoreHistory(restored);
+    } catch { /* */ }
+  };
 
   // 初始化 Agent 会话
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
-      const config = await loadAgentConfig();
-      const enabledSkills = await loadEnabledSkills();
-      const agentServers = await loadAgentServers();
-      if (cancelled) return;
-      ipc.frontendLog(`[AgentPanel ${compact ? 'compact' : 'full'}] init: config=${config ? '有' : '无'} servers=${agentServers.length} skills=${enabledSkills.length}`);
-      if (!config) {
+      try {
+        const config = await loadAgentConfig();
+        const enabledSkills = await loadEnabledSkills();
+        const agentServers = await loadAgentServers();
+        if (cancelled) return;
+        ipc.frontendLog(`[AgentPanel ${compact ? 'compact' : 'full'}] init: config=${config ? '有' : '无'} servers=${agentServers.length} skills=${enabledSkills.length}`);
+        if (!config) {
+          prevConfigRef.current = null;
+          sessionRef.current = null;
+          setSession(null);
+          return;
+        }
+        const prev = prevConfigRef.current;
+        if (prev && prev.baseUrl === config.baseUrl && prev.model === config.model && prev.apiKey === config.apiKey) {
+          prevConfigRef.current = config;
+          return;
+        }
+        prevConfigRef.current = config;
+        const s = new AgentSession(config, agentServers, enabledSkills);
+        sessionRef.current = s;
+        setSession(s);
+        ipc.frontendLog(`[AgentPanel ${compact ? 'compact' : 'full'}] session 已创建 model=${config.model}`);
+      } catch (e) {
+        if (cancelled) return;
+        // IPC 失败不再抛成未处理的 Promise rejection;回到无会话状态,UI 保持可用
+        console.error('[Agent] 初始化会话失败', e);
         prevConfigRef.current = null;
         sessionRef.current = null;
         setSession(null);
-        return;
       }
-      const prev = prevConfigRef.current;
-      if (prev && prev.baseUrl === config.baseUrl && prev.model === config.model && prev.apiKey === config.apiKey) {
-        prevConfigRef.current = config;
-        return;
-      }
-      prevConfigRef.current = config;
-      const s = new AgentSession(config, agentServers, enabledSkills);
-      sessionRef.current = s;
-      setSession(s);
-      ipc.frontendLog(`[AgentPanel ${compact ? 'compact' : 'full'}] session 已创建 model=${config.model}`);
     };
     init();
     return () => { cancelled = true; };
@@ -144,14 +198,19 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     const effectiveSessionId = sessionId ?? localStorage.getItem('agent_active_session');
     sessionIdRef.current = effectiveSessionId;
     if (!effectiveSessionId) {
-      setMessages([]);
+      updateMessages([]);
       return;
     }
     let cancelled = false;
+    const versionAtLoad = messagesVersionRef.current;
     (async () => {
       try {
         const stored = await ipc.loadAgentMessages(effectiveSessionId);
         if (cancelled) return;
+        // 竞态防护:加载期间用户已切到别的会话(sessionIdRef 被 switchSession 改掉),
+        // 或已发出新消息(版本号变化)→ 丢弃过期结果,不覆盖新消息
+        if (sessionIdRef.current !== effectiveSessionId) return;
+        if (messagesVersionRef.current !== versionAtLoad) return;
         const restored: AgentMessage[] = stored.map(s => ({
           id: s.id,
           sender: s.sender as 'user' | 'agent' | 'system',
@@ -159,12 +218,21 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
           timestamp: s.timestamp,
           proposal: s.proposal as AgentProposal | undefined,
         }));
-        setMessages(restored);
+        lastPersistedRef.current.clear(); // 新会话:清空幂等记录,恢复出的消息允许再次更新落盘
+        updateMessages(restored);
         // 重建 LLM 上下文:让 Agent "记住"之前的对话
         sessionRef.current?.restoreHistory(restored);
       } catch (e) { console.error('[Agent] 加载历史消息失败', e); }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // 清理时机:会话切换(AgentCopilot 按 key={activeSessionId} 重挂载面板)或面板卸载。
+      // 本清理先于新 effect 执行,此时 sessionIdRef 仍是旧会话 → 把旧会话尚未完成的
+      // 流式消息按当前内容快照持久化。若流式稍后才完成,旧闭包里的 updateMessages
+      // 仍会更新 messagesRef(ref 是普通对象,卸载后照样可写),finalizeMessage 检测到
+      // 内容变化会再次落盘,后端按 id 去重取最后一条 → 最终内容胜出。
+      finalizeUnfinished();
+    };
   }, [sessionId]);
 
   useEffect(() => {
@@ -232,26 +300,28 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
   ) => {
     if (!sessionRef.current) return;
     const resultMsgId = nextId('msg_agent');
-    setMessages(prev => [...prev, {
+    updateMessages([...messagesRef.current, {
       id: resultMsgId, sender: 'agent', content: '', streaming: true,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     }]);
 
     const callbacks = {
-      onText: (text: string) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
+      onText: (text: string) => updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
       onProposal: () => {},
       onDone: (turn: AgentTurn) => {
-        setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+        updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? {
           ...m, content: turn.text || '(分析完成)', streaming: false,
         } : m));
-        finalizeMessage(resultMsgId);
+        // 这里不 finalize:dispatchToolCalls 会把 proposal/最终内容写入后再统一 finalize,
+        // 避免同一条消息被 append 两次
         dispatchToolCalls(turn, resultMsgId);
       },
       onError: (err: Error) => {
-        setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+        updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? {
           ...m, content: `错误: ${err.message}`, streaming: false,
         } : m));
-        finalizeMessage(resultMsgId);
+        // finalize 交给外层 catch(agent.ts 的 onError 之后必然 throw,两者都会触发;
+        // 幂等 guard 兜底,不会重复 append)
         setIsRunning(false);
       },
     };
@@ -260,7 +330,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       await sessionRef.current.continueAfterExecution(call, resultText, callbacks);
     } catch (err) {
       const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
-      setMessages(prev => prev.map(m => m.id === resultMsgId ? {
+      updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? {
         ...m, content: `错误: ${msg}`, streaming: false,
       } : m));
       finalizeMessage(resultMsgId);
@@ -271,6 +341,8 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
   /** 工具分发:只读工具自动执行,写工具生成 proposal */
   const dispatchToolCalls = async (turn: AgentTurn, agentMsgId: string) => {
     if (turn.toolCalls.length === 0) {
+      // 本轮没有工具调用:onDone 已写入最终文本,这里补上持久化(此前会丢失该消息)
+      finalizeMessage(agentMsgId);
       setIsRunning(false);
       return;
     }
@@ -281,7 +353,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
 
     if (isReadOnly && !forceApproval) {
       // 只读工具:自动执行 → 结果回传 Agent 续轮(用户看到"正在执行只读查询"的提示)
-      setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+      updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
         ...m,
         content: (turn.text || '') + `\n\n⏳ 自动执行只读工具 \`${call.name}\`…`,
       } : m));
@@ -290,15 +362,17 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
         const resultText = await executeReadOnlyTool(call);
         // 先把工具结果展示给用户(附在当前消息后)
         const preview = resultText.length > 500 ? resultText.slice(0, 500) + '\n…(截断)' : resultText;
-        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
           ...m,
           content: (turn.text || '') + `\n\n✅ \`${call.name}\` 结果:\n\`\`\`\n${preview}\n\`\`\``,
         } : m));
+        // ✅ 结果已写入消息:此时持久化,保证最终内容落盘(此前成功路径从未持久化)
+        finalizeMessage(agentMsgId);
         // 续轮:让 Agent 分析结果
         await continueWithResult(call, resultText);
       } catch (err) {
         const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
-        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
           ...m,
           content: (turn.text || '') + `\n\n⚠ 只读工具 \`${call.name}\` 执行失败: ${msg}`,
           streaming: false,
@@ -316,13 +390,13 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       const sid = validateServerId(call.arguments.server_id);
       const cmd = call.arguments.command;
       if (!sid) {
-        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
           ...m, content: `⚠ Agent 提议缺少有效的目标服务器,已跳过。`, streaming: false,
         } : m));
         finalizeMessage(agentMsgId); setIsRunning(false); return;
       }
       if (typeof cmd !== 'string' || !cmd.trim()) {
-        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
           ...m, content: `⚠ Agent 提议缺少命令内容,已跳过。`, streaming: false,
         } : m));
         finalizeMessage(agentMsgId); setIsRunning(false); return;
@@ -343,7 +417,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       const path = call.arguments.path;
       const content = call.arguments.content;
       if (!sid || typeof path !== 'string' || typeof content !== 'string') {
-        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+        updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
           ...m, content: `⚠ Agent 的 write_file 提议参数不完整,已跳过。`, streaming: false,
         } : m));
         finalizeMessage(agentMsgId); setIsRunning(false); return;
@@ -360,13 +434,13 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       };
     } else {
       // 未知写工具
-      setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+      updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
         ...m, content: `⚠ 不支持的工具: ${call.name},已跳过。`, streaming: false,
       } : m));
       finalizeMessage(agentMsgId); setIsRunning(false); return;
     }
 
-    setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+    updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
       ...m,
       content: turn.text || '(Agent 提议执行以下操作,请审批)',
       streaming: false,
@@ -407,32 +481,33 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     setIsRunning(true);
 
     const agentMsgId = nextId('msg_agent');
-    setMessages(prev => [...prev, {
+    updateMessages([...messagesRef.current, {
       id: agentMsgId, sender: 'agent', content: '', streaming: true,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     }]);
 
     try {
       const turn = await session.sendMessage(userMsg.content, {
-        onText: (text) => setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: text } : m)),
+        onText: (text) => updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? { ...m, content: text } : m)),
         onProposal: () => {},
         onDone: (t) => {
-          setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
             ...m, content: t.text || '', streaming: false,
           } : m));
+          // 持久化交给 dispatchToolCalls(它在写入最终内容/proposal 后统一 finalize)
         },
         onError: (err) => {
-          setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
             ...m, content: `错误: ${err.message}`, streaming: false,
           } : m));
-          finalizeMessage(agentMsgId);
+          // finalize 交给外层 catch(onError 之后必然 throw;幂等 guard 兜底防重复)
           setIsRunning(false);
         },
       });
       await dispatchToolCalls(turn, agentMsgId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
-      setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+      updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
         ...m, content: `错误: ${msg}`, streaming: false,
       } : m));
       finalizeMessage(agentMsgId);
@@ -449,13 +524,16 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     const toolCall = proposal.toolCall;
     if (!toolCall) return;
 
-    setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
+    updateMessages(messagesRef.current.map(m => m.proposal?.id === proposalId ? {
       ...m, proposal: { ...m.proposal!, approved: true }
     } : m));
+    // 审批状态变化 → 重新落盘(幂等 guard 检测到内容变化会放行,
+    // 后端按 id 去重取最后一条),否则重载后该 proposal 又变回"待审批"
+    finalizeMessage(msg.id);
 
     setIsRunning(true);
     const resultMsgId = nextId('msg_agent');
-    setMessages(prev => [...prev, {
+    updateMessages([...messagesRef.current, {
       id: resultMsgId, sender: 'agent', content: '', streaming: true,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     }]);
@@ -471,18 +549,20 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
           approved_by: 'user',
           proposal_id: proposalId,
         });
-        setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
+        updateMessages(messagesRef.current.map(m => m.proposal?.id === proposalId ? {
           ...m, proposal: { ...m.proposal!, result: execResult }
         } : m));
+        finalizeMessage(msg.id); // 执行结果写回 proposal,同样需要重新落盘
         resultText = `命令执行完成。\nstdout:\n${execResult.stdout}\n${execResult.stderr ? 'stderr:\n' + execResult.stderr + '\n' : ''}退出码:${execResult.exit_code}`;
       } else if (proposal.tool_name === 'write_file') {
         const path = toolCall.arguments.path as string;
         const content = toolCall.arguments.content as string;
         await ipc.sftpWriteFile(proposal.server_id, path, content);
         execResult = { audit_id: 0, stdout: `文件 ${path} 已写入(${content.length} 字符)`, stderr: '', exit_code: 0, success: true };
-        setMessages(prev => prev.map(m => m.proposal?.id === proposalId ? {
+        updateMessages(messagesRef.current.map(m => m.proposal?.id === proposalId ? {
           ...m, proposal: { ...m.proposal!, result: execResult }
         } : m));
+        finalizeMessage(msg.id); // 执行结果写回 proposal,同样需要重新落盘
         resultText = `文件写入完成: ${path}(${content.length} 字符)`;
       } else {
         throw new Error(`不支持的审批工具: ${proposal.tool_name}`);
@@ -490,16 +570,16 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
 
       // 续轮:让 Agent 分析执行结果
       const callbacks = {
-        onText: (text: string) => setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
+        onText: (text: string) => updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? { ...m, content: text } : m)),
         onProposal: () => {},
         onDone: (t: AgentTurn) => {
-          setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: t.text || '(完成)', streaming: false } : m));
-          finalizeMessage(resultMsgId);
+          updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? { ...m, content: t.text || '(完成)', streaming: false } : m));
+          // 这里不 finalize:dispatchToolCalls 写入最终内容/proposal 后统一 finalize,避免重复 append
           dispatchToolCalls(t, resultMsgId);
         },
         onError: (err: Error) => {
-          setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${err.message}`, streaming: false } : m));
-          finalizeMessage(resultMsgId);
+          updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${err.message}`, streaming: false } : m));
+          // finalize 交给外层 catch(onError 之后必然 throw;幂等 guard 兜底防重复)
           setIsRunning(false);
         },
       };
@@ -512,7 +592,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err);
-      setMessages(prev => prev.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${msg}`, streaming: false } : m));
+      updateMessages(messagesRef.current.map(m => m.id === resultMsgId ? { ...m, content: `错误: ${msg}`, streaming: false } : m));
       finalizeMessage(resultMsgId);
       setIsRunning(false);
     }
@@ -520,10 +600,18 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
 
   const handleReject = (proposalId: string) => {
     let msgId = '';
-    setMessages(prev => prev.map(m => {
-      if (m.proposal?.id === proposalId) { msgId = m.id; return { ...m, proposal: { ...m.proposal!, approved: false } }; }
+    // 不在 setState updater 里捕获 msgId(updater 必须纯净,StrictMode 会双调);
+    // 直接基于 messagesRef 计算新列表
+    const next = messagesRef.current.map(m => {
+      if (m.proposal?.id === proposalId) {
+        msgId = m.id;
+        return { ...m, proposal: { ...m.proposal!, approved: false } };
+      }
       return m;
-    }));
+    });
+    updateMessages(next);
+    // 内容已变(approved:false):幂等 guard 检测到变化会放行再次落盘,
+    // 后端按 id 去重取最后一条 → 拒绝状态得以持久化
     if (msgId) setTimeout(() => finalizeMessage(msgId), 0);
   };
 

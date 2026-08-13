@@ -185,6 +185,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [servers, setServers] = useState<Server[]>([]);
   const [connectedServerIds, setConnectedServerIds] = useState<Set<number>>(new Set());
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  // 镜像最新页签列表:open/close 需要基于"当前最新"计算下一个列表,
+  // 函数式更新无法在 updater 外拿到 nextTabs(用于 active 兜底),故用 ref 同步镜像
+  const terminalTabsRef = useRef<TerminalTab[]>([]);
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditStats, setAuditStats] = useState({ total: 0, success: 0, failed: 0 });
@@ -371,7 +374,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         id: termId, serverId, serverName: s.name,
         title: `${s.name} (${s.host})`,
       };
-      setTerminalTabs(prev => [...prev, tab]);
+      const next = [...terminalTabsRef.current, tab];
+      terminalTabsRef.current = next;
+      setTerminalTabs(next);
       setActiveTerminalId(termId);
       setActiveView('terminal');
     } catch (e) { handleError(e); }
@@ -380,9 +385,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const closeTerminal = async (id: string) => {
     try { await ipc.terminalClose(id); } catch (e) { console.warn('[Witchcat Ops] 关闭终端失败', e); }
     ipc.disposeTerminalBuffer(id);
-    const nextTabs = terminalTabs.filter(t => t.id !== id);
+    // 基于 ref 镜像同步计算:连续快速关闭多个页签时,闭包里的 terminalTabs 已过期,
+    // ref 始终是最新列表,每次都能正确移除(否则会留下 xterm 已销毁的幽灵页签)。
+    // active 用函数式更新兜底:关闭的是当前页签时切到剩余第一个
+    const nextTabs = terminalTabsRef.current.filter(t => t.id !== id);
+    terminalTabsRef.current = nextTabs;
     setTerminalTabs(nextTabs);
-    if (activeTerminalId === id) setActiveTerminalId(nextTabs[0]?.id ?? null);
+    setActiveTerminalId(prev => (prev === id ? nextTabs[0]?.id ?? null : prev));
   };
 
   // ============ Audit ============
