@@ -11,6 +11,7 @@
 //!
 //! 注:terminal(交互式终端流)是顶层模块,在 lib.rs 直接声明
 
+pub mod agent_chat;
 pub mod knowledge;
 pub mod ops;
 pub mod proposals;
@@ -21,6 +22,7 @@ pub mod sftp;
 pub mod vault;
 
 // 重新导出所有命令函数(供 lib.rs 的 generate_handler! 使用)
+pub use agent_chat::*;
 pub use knowledge::*;
 pub use ops::*;
 pub use proposals::*;

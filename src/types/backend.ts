@@ -151,21 +151,52 @@ export interface Doc {
 export interface ProviderInput {
   name: string;
   base_url: string;
-  api_key: string;
+  api_key: string; // 更新时留空 = 保持现有 key(后端 COALESCE)
   default_model?: string;
   models?: string[];
 }
 
-export interface Provider {
+/** Provider 摘要(后端返回;API key 永不出后端,api_key_enc 恒为掩码) */
+export interface ProviderSummary {
   id: string;
   name: string;
   base_url: string;
-  api_key_enc: string;
+  api_key_enc: string; // 恒为 "***"
+  has_key: boolean;    // 是否已配置 API key
   default_model: string | null;
   models: string | null; // JSON array
   created_at: string;
   updated_at: string;
 }
+
+// ============ Agent LLM 调用代理(后端流式事件) ============
+
+export interface ChatRequest {
+  request_id: string; // 前端生成的唯一 id,用于取消
+  provider_id: string;
+  model: string;
+  messages: unknown[]; // 前端构建好的完整消息数组(含 system prompt)
+  temperature?: number;
+  tools: unknown; // TOOLS 数组
+}
+
+export interface ToolCallPayload {
+  id: string; // 格式 call_<unix_ms>_<i>
+  name: string;
+  arguments: Record<string, unknown>; // 解析失败时 {}
+}
+
+export interface AgentTurnPayload {
+  text: string | null;
+  reasoning: string | null;
+  tool_calls: ToolCallPayload[];
+}
+
+export type ChatEvent =
+  | { type: 'text'; text: string }          // 累计正文
+  | { type: 'reasoning'; text: string }     // 累计 reasoning
+  | { type: 'done'; turn: AgentTurnPayload } // 流结束,完整 turn
+  | { type: 'error'; message: string };
 
 export interface DirEntry {
   name: string;

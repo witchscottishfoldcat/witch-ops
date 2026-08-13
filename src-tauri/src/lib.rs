@@ -230,6 +230,9 @@ pub fn run() {
             commands::create_provider,
             commands::update_provider,
             commands::delete_provider,
+            // Agent LLM 调用代理(key 不出后端,流式事件走 Channel)
+            commands::agent_chat,
+            commands::agent_chat_cancel,
             // 终端流(交互式)
             terminal::terminal_open,
             terminal::terminal_input,

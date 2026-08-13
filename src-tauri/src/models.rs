@@ -202,6 +202,43 @@ pub struct AgentProvider {
     pub updated_at: String,
 }
 
+/// Provider 摘要(返回给前端的形态)。
+///
+/// 安全契约:API key 永不离开后端 —— `api_key_enc` 恒为掩码 "***",
+/// 前端只知道 `has_key`(是否已配置 key)。LLM 调用经 `agent_chat`
+/// 由后端代发,key 只在后端解密使用。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderSummary {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    /// 恒为掩码 "***(key 永不出后端)
+    pub api_key_enc: String,
+    /// 是否已配置 API key(由库中密文是否为空计算,不来自 DB 列)
+    pub has_key: bool,
+    pub default_model: Option<String>,
+    pub models: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl AgentProvider {
+    /// 转成前端可见的摘要:key 掩码 + has_key 标记
+    pub fn summary(&self) -> ProviderSummary {
+        ProviderSummary {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            base_url: self.base_url.clone(),
+            api_key_enc: "***".into(),
+            has_key: !self.api_key_enc.is_empty(),
+            default_model: self.default_model.clone(),
+            models: self.models.clone(),
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
+        }
+    }
+}
+
 /// 新建/更新 Provider 的输入(api_key 为明文)
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProviderInput {

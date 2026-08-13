@@ -156,7 +156,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
           return;
         }
         const prev = prevConfigRef.current;
-        if (prev && prev.baseUrl === config.baseUrl && prev.model === config.model && prev.apiKey === config.apiKey) {
+        if (prev && prev.providerId === config.providerId && prev.model === config.model) {
           prevConfigRef.current = config;
           return;
         }

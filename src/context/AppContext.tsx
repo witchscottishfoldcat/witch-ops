@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   Server, ServerInput, AuditLog, AuditFilter, Skill, QuickAction, QuickActionStep, Doc,
-  Provider, ProviderInput, Container, ContainerAction, Service, ServerMetrics,
+  ProviderSummary, ProviderInput, Container, ContainerAction, Service, ServerMetrics,
   DirEntry, AuditContext, ExecuteResult
 } from '../types/backend';
 import * as ipc from '../lib/ipc';
@@ -154,9 +154,10 @@ interface AppContextType {
   controlService: (serviceName: string, action: string) => Promise<void>;
 
   // Providers
-  providers: Provider[];
+  providers: ProviderSummary[];
   refreshProviders: () => Promise<void>;
   addProvider: (input: ProviderInput) => Promise<void>;
+  updateProvider: (id: string, input: ProviderInput) => Promise<void>;
   deleteProvider: (id: string) => Promise<void>;
 
   // Agent 会话列表(对话记忆模块用)
@@ -201,7 +202,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [metrics, setMetrics] = useState<ServerMetrics | null>(null);
   const [containers, setContainers] = useState<Container[]>([]);
   const [services, setServices] = useState<Service[]>([]);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [agentSessions, setAgentSessions] = useState<AgentSessionInfo[]>([]);
 
   const clearError = () => setLastError(null);
@@ -673,6 +674,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addProvider = async (input: ProviderInput) => {
     try { await ipc.createProvider(input); await refreshProviders(); } catch (e) { handleError(e); }
   };
+  const updateProvider = async (id: string, input: ProviderInput) => {
+    try { await ipc.updateProvider(id, input); await refreshProviders(); } catch (e) { handleError(e); }
+  };
   const deleteProvider = async (id: string) => {
     try { await ipc.deleteProvider(id); await refreshProviders(); } catch (e) { handleError(e); }
   };
@@ -707,7 +711,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       metrics, refreshMetrics,
       containers, refreshContainers, controlContainer,
       services, refreshServices, controlService,
-      providers, refreshProviders, addProvider, deleteProvider,
+      providers, refreshProviders, addProvider, updateProvider, deleteProvider,
       agentSessions, refreshAgentSessions, deleteAgentSession,
       lastError, clearError,
     }}>

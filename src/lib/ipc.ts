@@ -2,12 +2,13 @@
 // 所有后端命令在这里统一封装,组件不直接调 invoke。
 // 契约来源:docs/BACKEND_API.md
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, Channel } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import type {
   Server, ServerInput, AuditLog, AuditFilter, Skill, QuickAction, Doc,
-  Provider, ProviderInput, Container, ContainerAction, Service, ServerMetrics,
+  ProviderSummary, ProviderInput, Container, ContainerAction, Service, ServerMetrics,
   DirEntry, AuditContext, ExecuteResult, AgentExecutionResult,
+  ChatRequest, ChatEvent,
 } from '../types/backend';
 
 // ============ 凭证库 ============
@@ -74,13 +75,29 @@ export const docToSkill = (docId: string, skillId: string, title: string) =>
   invoke<void>('doc_to_skill', { docId, skillId, title });
 
 // ============ Providers ============
-export const listProviders = () => invoke<Provider[]>('list_providers');
-export const getProvider = (id: string) => invoke<Provider>('get_provider', { id });
+export const listProviders = () => invoke<ProviderSummary[]>('list_providers');
+export const getProvider = (id: string) =>
+  invoke<ProviderSummary>('get_provider', { id });
 export const createProvider = (input: ProviderInput) =>
   invoke<string>('create_provider', { input });
 export const updateProvider = (id: string, input: ProviderInput) =>
   invoke<void>('update_provider', { id, input });
 export const deleteProvider = (id: string) => invoke<void>('delete_provider', { id });
+
+// ============ Agent LLM 调用代理(后端直连 provider,key 不出后端) ============
+/** 发起流式 LLM 调用;事件经 Channel 推送,Promise 在命令受理后即 resolve */
+export const agentChat = (
+  request: ChatRequest,
+  onEvent: (event: ChatEvent) => void
+): Promise<void> => {
+  const out = new Channel<ChatEvent>();
+  out.onmessage = (event) => onEvent(event);
+  return invoke('agent_chat', { request, out });
+};
+
+/** 取消指定 request 的流式调用(后端断开连接,不再发 Done) */
+export const agentChatCancel = (requestId: string) =>
+  invoke<void>('agent_chat_cancel', { requestId });
 
 // ============ SFTP ============
 export const sftpListDir = (serverId: number, path: string) =>

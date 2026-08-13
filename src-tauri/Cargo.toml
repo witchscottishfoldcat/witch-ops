@@ -29,6 +29,10 @@ ssh-key = "0.6"
 # 异步运行时
 tokio = { version = "1", features = ["full"] }
 
+# LLM 流式调用(agent_chat 代理;key 永不出后端)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+
 # 数据库(SQLite + 编译期校验 SQL)
 # 注意:sqlx 的 macros 需 DATABASE_URL,这里用 runtime 模式,关闭 macros 校验
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "chrono", "json"] }

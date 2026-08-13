@@ -289,7 +289,7 @@ Agent 生成文档后调此存储。
 |---|---|
 | 服务器管理 | list_servers / create_server / connect_server / execute_command |
 | 终端 | terminal_open / terminal_input / terminal_resize / terminal_close + 事件监听 |
-| Agent 聊天 | connect_server + execute_command(source=agent) + get_skill + list_providers |
+| Agent 聊天 | agent_chat(LLM 代理流) + create/approve/reject/execute_agent_proposal + get_skill |
 | 审计日志 | query_audit_logs / get_session_audit_logs / audit_stats |
 | Skills | list_skills / upsert_skill / toggle_skill |
 | 快捷指令 | list_quick_actions / upsert_quick_action |
@@ -305,8 +305,8 @@ Agent 生成文档后调此存储。
 ## 数据流(经验飞轮闭环)
 
 ```
-Agent 执行(execute_command, source=agent)
-    → 自动写 audit_logs
+Agent 执行(create_agent_proposal → approve_agent_proposal → execute_agent_proposal)
+    → 后端自动写 audit_logs(审计上下文完全由服务端构建)
 会话结束
     → 前端拉 get_session_audit_logs + 对话内容
     → 调 LLM 生成复盘文档 → upsert_doc
@@ -314,7 +314,7 @@ Agent 执行(execute_command, source=agent)
     → 点"存为技能" → doc_to_skill
 下次 Agent
     → list_enabled_skills 注入系统提示 → get_skill 按需加载
-    → 又走 execute_command → 闭环
+    → 又走提案审批流 → 闭环
 ```
 
 ---
@@ -327,14 +327,17 @@ Agent 执行(execute_command, source=agent)
 
 ## 七、LLM Provider 管理
 
-### `list_providers() → Provider[]`
-返回所有 provider。**api_key 字段**:Vault 已解锁时返回解密明文(供前端调 LLM 用),未解锁返回 `***`。
+### `list_providers() → ProviderSummary[]`
+返回所有 provider。**API key 永不出后端**:`api_key_enc` 恒为掩码 `***`,
+前端只能通过 `has_key` 知道该 provider 是否已配置 key;真正的 LLM 调用由
+`agent_chat` 命令在后端解密 key 后代理发出。
 ```ts
-interface Provider {
+interface ProviderSummary {
   id: string
   name: string
   base_url: string         // 如 https://api.deepseek.com
-  api_key_enc: string      // 已解锁=明文,未解锁='***'
+  api_key_enc: string      // 恒为掩码 '***'(密钥不出后端)
+  has_key: boolean         // 是否已配置 API key
   default_model: string | null
   models: string | null    // JSON 数组 '["deepseek-chat",...]'
   created_at: string
@@ -342,20 +345,30 @@ interface Provider {
 }
 ```
 
-### `get_provider(id: string) → Provider`
+### `get_provider(id: string) → ProviderSummary`
 ### `create_provider(input: ProviderInput) → string`
-返回新 provider id。需 Vault 已解锁。
+返回新 provider id。需 Vault 已解锁,**api_key 必填**。
 ```ts
 interface ProviderInput {
   name: string
   base_url: string
-  api_key: string          // 明文,后端加密存储
+  api_key: string          // 明文,后端加密存储;update 时留空 = 保持不变
   default_model?: string
   models?: string[]
 }
 ```
 ### `update_provider(id: string, input: ProviderInput) → void`
 ### `delete_provider(id: string) → void`
+
+### `agent_chat(request, out: Channel<ChatEvent>) → void`
+LLM 流式调用代理(OpenAI 兼容 `/chat/completions`,SSE)。命令立即返回,
+流事件经 `out` Channel 推送:`text`(累计正文)/ `reasoning` / `done`(完整 turn)/
+`error`。配套 `agent_chat_cancel(request_id)` 取消在途请求。
+
+### Agent 提案审批状态机
+`create_agent_proposal(...) → prop_id` → `approve_agent_proposal(id)`(或 `reject_agent_proposal(id)`)
+→ `execute_agent_proposal(id) → { proposal_id, result, audit_id }`。
+只有服务端批准的提案才能执行;`execute_command` 拒绝 `source=agent` 的前端直传调用。
 
 ---
 

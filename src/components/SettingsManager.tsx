@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { ProviderInput } from '../types/backend';
-import { Settings, Plus, Eye, EyeOff, Trash2, Cpu, Lock } from 'lucide-react';
+import { ProviderInput, ProviderSummary } from '../types/backend';
+import { Settings, Plus, Trash2, Cpu, Lock, Pencil } from 'lucide-react';
 import { VaultModal } from './VaultModal';
 
 /** 安全 JSON 解析:渲染期非法 JSON 返回 null,避免白屏 */
@@ -11,11 +11,12 @@ function safeParse<T>(raw: string | null): T | null {
 }
 
 export const SettingsManager: React.FC = () => {
-  const { providers, addProvider, deleteProvider, isVaultUnlocked, isVaultInitialized } = useApp();
-  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
+  const { providers, addProvider, updateProvider, deleteProvider, isVaultUnlocked, isVaultInitialized } = useApp();
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  /** 正在编辑的 provider(null = 新建) */
+  const [editingProvider, setEditingProvider] = useState<ProviderSummary | null>(null);
 
   // 两步确认:3 秒后自动复位
   useEffect(() => {
@@ -32,17 +33,40 @@ export const SettingsManager: React.FC = () => {
     models: ['deepseek-chat', 'deepseek-reasoner']
   });
 
-  const toggleShowKey = (id: string) => {
-    setShowKey(prev => ({ ...prev, [id]: !prev[id] }));
+  const isEditing = editingProvider !== null;
+
+  const openCreate = () => {
+    setEditingProvider(null);
+    setFormData({ name: '', base_url: '', api_key: '', default_model: 'deepseek-chat', models: ['deepseek-chat'] });
+    setShowModal(true);
   };
 
-  const handleAddSubmit = async (e: React.FormEvent) => {
+  const openEdit = (p: ProviderSummary) => {
+    setEditingProvider(p);
+    setFormData({
+      name: p.name,
+      base_url: p.base_url,
+      api_key: '', // 留空 = 保持现有 key(后端 COALESCE)
+      default_model: p.default_model || '',
+      models: safeParse<string[]>(p.models) ?? [],
+    });
+    setShowModal(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.base_url || !formData.api_key) return;
+    if (!formData.name || !formData.base_url) return;
+    // 新建必须提供 key;编辑时留空表示保持不变
+    if (!isEditing && !formData.api_key) return;
     setSaving(true);
     try {
-      await addProvider(formData);
+      if (isEditing && editingProvider) {
+        await updateProvider(editingProvider.id, { ...formData, api_key: formData.api_key || '' });
+      } else {
+        await addProvider(formData);
+      }
       setShowModal(false);
+      setEditingProvider(null);
       setFormData({ name: '', base_url: '', api_key: '', default_model: 'deepseek-chat', models: ['deepseek-chat'] });
     } catch {
       // 保存失败时保留弹窗和表单数据,错误已由 context toast 提示
@@ -71,7 +95,7 @@ export const SettingsManager: React.FC = () => {
         <h3 style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Cpu size={20} style={{ color: 'var(--accent-cyan)' }} /> LLM Provider 服务商接入 (`list_providers`)
         </h3>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+        <button className="btn btn-primary" onClick={openCreate}>
           <Plus size={16} /> 添加 LLM Provider
         </button>
       </div>
@@ -80,7 +104,6 @@ export const SettingsManager: React.FC = () => {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
         {providers.map(p => {
           const models: string[] = safeParse<string[]>(p.models) ?? [];
-          const isKeyVisible = showKey[p.id];
           const confirming = confirmDeleteId === p.id;
 
           return (
@@ -92,38 +115,46 @@ export const SettingsManager: React.FC = () => {
                     {p.base_url}
                   </div>
                 </div>
-                <button
-                  className="btn btn-secondary"
-                  style={{
-                    padding: 6,
-                    color: confirming ? '#fff' : 'var(--accent-rose)',
-                    background: confirming ? 'var(--accent-rose)' : undefined,
-                    borderColor: confirming ? 'var(--accent-rose)' : undefined,
-                  }}
-                  onClick={() => {
-                    if (confirming) {
-                      setConfirmDeleteId(null);
-                      deleteProvider(p.id);
-                    } else {
-                      setConfirmDeleteId(p.id);
-                    }
-                  }}
-                  title={confirming ? '再次点击确认删除' : '删除 Provider'}
-                >
-                  <Trash2 size={14} /> {confirming ? '确认删除?' : ''}
-                </button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: 6 }}
+                    onClick={() => openEdit(p)}
+                    title="编辑 Provider"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{
+                      padding: 6,
+                      color: confirming ? '#fff' : 'var(--accent-rose)',
+                      background: confirming ? 'var(--accent-rose)' : undefined,
+                      borderColor: confirming ? 'var(--accent-rose)' : undefined,
+                    }}
+                    onClick={() => {
+                      if (confirming) {
+                        setConfirmDeleteId(null);
+                        deleteProvider(p.id);
+                      } else {
+                        setConfirmDeleteId(p.id);
+                      }
+                    }}
+                    title={confirming ? '再次点击确认删除' : '删除 Provider'}
+                  >
+                    <Trash2 size={14} /> {confirming ? '确认删除?' : ''}
+                  </button>
+                </div>
               </div>
 
-              {/* API Key Box */}
+              {/* API Key 状态(密钥只存后端,前端永远只见掩码) */}
               <div style={{ background: '#04060a', padding: 8, borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, border: '1px solid var(--border-color)' }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent-cyan)' }}>
-                  {!isVaultUnlocked ? '*** (Vault 已锁定)' : isKeyVisible ? p.api_key_enc : '••••••••••••••••••••'}
+                  {p.has_key ? '••••••••••••••••••••' : '(未设置 API Key)'}
                 </span>
-                {isVaultUnlocked && (
-                  <button style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }} onClick={() => toggleShowKey(p.id)}>
-                    {isKeyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                )}
+                <span style={{ fontSize: 10, color: p.has_key ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
+                  {p.has_key ? '已配置' : '缺少 Key'}
+                </span>
               </div>
 
               {/* Default Model */}
@@ -144,14 +175,16 @@ export const SettingsManager: React.FC = () => {
         })}
       </div>
 
-      {/* Add Provider Modal */}
+      {/* Provider 新建/编辑弹窗 */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>添加 LLM Provider 服务商</h3>
-            <form onSubmit={handleAddSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>
+              {isEditing ? '编辑 LLM Provider 服务商' : '添加 LLM Provider 服务商'}
+            </h3>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {/* Vault 已启用但锁定:保存 API Key 会失败,强提示 */}
-              {isVaultInitialized && !isVaultUnlocked && (
+              {isVaultInitialized && !isVaultUnlocked && (!isEditing || formData.api_key) && (
                 <div
                   style={{
                     display: 'flex',
@@ -192,15 +225,22 @@ export const SettingsManager: React.FC = () => {
               </div>
 
               <div>
-                <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>API Key (明文输入，将由 Vault 加密保存)</label>
+                <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {isEditing ? 'API Key (留空保持不变)' : 'API Key (明文输入，将由 Vault 加密保存)'}
+                </label>
                 <input
                   type="password"
                   className="input-field"
-                  placeholder="sk-..."
+                  placeholder={isEditing && editingProvider?.has_key ? '已设置(留空保持不变)' : 'sk-...'}
                   value={formData.api_key}
                   onChange={e => setFormData({ ...formData, api_key: e.target.value })}
-                  required
+                  required={!isEditing}
                 />
+                {isEditing && editingProvider?.has_key && (
+                  <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+                    已设置 API Key。留空保持不变;输入新值则覆盖旧 Key。
+                  </div>
+                )}
               </div>
 
               <div>
@@ -214,7 +254,9 @@ export const SettingsManager: React.FC = () => {
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)} disabled={saving}>取消</button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? '保存中…' : '保存 Provider'}</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? '保存中…' : isEditing ? '保存修改' : '保存 Provider'}
+                </button>
               </div>
             </form>
           </div>

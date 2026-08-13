@@ -1,7 +1,8 @@
-// Witchcat Ops Agent 引擎(前端 LLM 调用)
+// Witchcat Ops Agent 引擎(LLM 调用经后端代理)
 //
 // 设计(借鉴 MaidKit ssh_agent_service.dart):
-// - 自己写 fetch 调 OpenAI 兼容 API,不走 SDK(保留 reasoning_content)
+// - LLM 的 HTTP 调用 + SSE 解析在后端(agent_chat 命令)完成,
+//   API key 永不进入前端;前端只收类型化流事件(Channel)
 // - Proposal 与 Execution 解耦:LLM 只能提案,审批后才执行
 // - 工具带 safe_to_run 标记
 // - 输出截断防 token 爆炸
@@ -15,8 +16,7 @@ import * as ipc from './ipc';
 // ============ 类型 ============
 
 export interface AgentConfig {
-  baseUrl: string;
-  apiKey: string;
+  providerId: string;
   model: string;
 }
 
@@ -143,7 +143,10 @@ export class AgentSession {
   private skills: AgentSkillInfo[];
   private history: Array<Record<string, unknown>> = [];
   private cancelFlag = false;
-  private abortController: AbortController | null = null;
+  /** 当前在途请求的后端 id(用于取消) */
+  private streamRequestId: string | null = null;
+  /** 取消时结算当前流的回调(后端取消后不再发 Done) */
+  private cancelSettle: (() => void) | null = null;
 
   constructor(
     config: AgentConfig,
@@ -203,10 +206,14 @@ Rules:
 - If the user asks about a server not in the list, say so.`;
   }
 
-  /** 取消当前请求(立即中止底层 fetch,不再等网络响应) */
+  /** 取消当前请求(通知后端断开连接;已积累内容作为结果返回,不报错) */
   cancel() {
+    if (this.cancelFlag) return;
     this.cancelFlag = true;
-    this.abortController?.abort();
+    if (this.streamRequestId) {
+      ipc.agentChatCancel(this.streamRequestId).catch(() => {});
+    }
+    this.cancelSettle?.();
   }
 
   /** 发送用户消息,返回 Agent 的第一轮输出(含可能的 Proposal) */
@@ -241,134 +248,79 @@ Rules:
     return this.streamChat(callbacks);
   }
 
-  // ============ 内部:流式调用 LLM ============
+  // ============ 内部:经后端代理流式调用 LLM ============
 
   private async streamChat(callbacks: AgentCallbacks): Promise<AgentTurn> {
-    const url = `${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`;
     const messages = [
       { role: 'system', content: this.systemPrompt() },
       ...this.history,
     ];
 
-    this.abortController = new AbortController();
-    const signal = this.abortController.signal;
+    this.cancelFlag = false;
+    const requestId = `${Date.now()}_${reqCounter++}`;
+    this.streamRequestId = requestId;
 
-    // fetch 网络层错误(断网/DNS 失败/Provider 配置错误)必须走 onError,
-    // 否则 UI 的占位消息会永远停在"思考中"
-    let resp: Response;
-    try {
-      resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          stream: true,
-          temperature: 0.2,
-          tools: TOOLS,
-          messages,
-        }),
-        signal,
-      });
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      callbacks.onError(error);
-      throw error;
-    }
-
-    if (!resp.ok) {
-      const err = await resp.text();
-      const error = new Error(`LLM API 错误 ${resp.status}: ${err}`);
-      callbacks.onError(error);
-      throw error;
-    }
-
-    if (!resp.body) {
-      const error = new Error('LLM 响应没有数据流(可能是流式支持被关闭)');
-      callbacks.onError(error);
-      throw error;
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     let text = '';
     let reasoning = '';
-    const toolCallsMap = new Map<number, { name?: string; arguments?: string }>();
+    let toolCalls: AgentToolCall[] = [];
 
-    try {
-      while (true) {
-        if (this.cancelFlag) break;
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+    // 等后端事件流结束。三种终态:
+    // - Done 事件 → 正常结算;
+    // - Error 事件 / invoke 拒绝 → onError + reject(与旧 fetch 路径一致);
+    // - cancel() → 后端停止推送(不发 Done),由 cancelSettle 主动结算部分结果。
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      this.cancelSettle = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
 
-        // 按行解析 SSE
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue;
-          const data = line.slice(5).trim();
-          if (!data || data === '[DONE]') continue;
-
-          try {
-            const json = JSON.parse(data);
-            if (json.error) {
-              throw new Error(json.error.message || 'LLM 错误');
-            }
-            const delta = json.choices?.[0]?.delta;
-            if (!delta) continue;
-
-            if (delta.content) {
-              text += delta.content;
+      ipc.agentChat(
+        {
+          request_id: requestId,
+          provider_id: this.config.providerId,
+          model: this.config.model,
+          messages,
+          tools: TOOLS,
+        },
+        (ev) => {
+          switch (ev.type) {
+            case 'text':
+              text = ev.text;
               callbacks.onText(text);
+              break;
+            case 'reasoning':
+              reasoning = ev.text;
+              break;
+            case 'done':
+              toolCalls = ev.turn.tool_calls.map(tc => ({ ...tc }));
+              if (settled) return;
+              settled = true;
+              resolve();
+              break;
+            case 'error': {
+              if (settled) return;
+              settled = true;
+              const error = new Error(ev.message);
+              callbacks.onError(error);
+              reject(error);
+              break;
             }
-            if (delta.reasoning_content) {
-              reasoning += delta.reasoning_content;
-            }
-            if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const idx = tc.index;
-                if (idx === undefined) continue;
-                const acc = toolCallsMap.get(idx) || {};
-                if (tc.function?.name) acc.name = tc.function.name;
-                if (tc.function?.arguments) acc.arguments = (acc.arguments || '') + tc.function.arguments;
-                toolCallsMap.set(idx, acc);
-              }
-            }
-          } catch {
-            // 忽略单条解析错误
           }
-        }
-      }
-    } catch (err) {
-      if (this.cancelFlag) {
-        // 用户主动取消:把已积累的内容作为结果返回,不报错
-      } else {
+        },
+      ).catch((err) => {
+        // 命令本身失败(provider 不存在 / 解密失败等)
+        if (settled) return;
+        settled = true;
         const error = err instanceof Error ? err : new Error(String(err));
         callbacks.onError(error);
-        throw error;
-      }
-    } finally {
-      this.abortController = null;
-      reader.releaseLock();
-    }
-
-    // 防御:LLM 返回的 tool_call arguments 可能不是合法 JSON,解析失败视为空参数
-    const toolCalls: AgentToolCall[] = Array.from(toolCallsMap.values()).map((tc, i) => {
-      let args: Record<string, unknown> = {};
-      if (tc.arguments) {
-        try { args = JSON.parse(tc.arguments); } catch { args = {}; }
-      }
-      return {
-        id: `call_${Date.now()}_${i}`,
-        name: tc.name || 'unknown',
-        arguments: args,
-      };
+        reject(error);
+      });
     });
+
+    this.cancelSettle = null;
+    this.streamRequestId = null;
 
     const turn: AgentTurn = {
       text: text || null,
@@ -387,19 +339,22 @@ Rules:
   }
 }
 
+/** 请求 id 自增计数器(同毫秒内区分多轮) */
+let reqCounter = 0;
+
 // ============ 辅助:从后端加载配置 ============
 
-/** 加载当前可用的 LLM 配置(从第一个已解锁的 provider) */
+/** 加载当前可用的 LLM 配置(从第一个已配置 key 的 provider) */
 export async function loadAgentConfig(): Promise<AgentConfig | null> {
   const providers = await ipc.listProviders();
-  const p = providers.find(pr => pr.api_key_enc && pr.api_key_enc !== '***');
+  const p = providers.find(pr => pr.has_key);
   if (!p) return null;
   let models: string[] = [];
   if (p.models) {
     try { models = JSON.parse(p.models); } catch { models = []; }
   }
   const model = p.default_model || models[0] || 'gpt-4o';
-  return { baseUrl: p.base_url, apiKey: p.api_key_enc, model };
+  return { providerId: p.id, model };
 }
 
 /** 加载启用的技能(注入系统提示) */
