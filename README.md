@@ -117,7 +117,7 @@ witchcat-ops/
 - [x] Skills / 快捷指令 / 文档飞轮
 - [x] Agent Copilot(提案-审批-执行)
 - [ ] MCP Server(对外暴露运维能力,loopback HTTP+SSE)
-- [ ] SFTP 二进制上传/下载
+- [x] SFTP 二进制上传/下载
 - [ ] 多标签终端分屏
 
 ## 文档
