@@ -13,6 +13,7 @@
 
 pub mod knowledge;
 pub mod ops;
+pub mod proposals;
 pub mod providers;
 pub mod servers;
 pub mod sessions;
@@ -22,6 +23,7 @@ pub mod vault;
 // 重新导出所有命令函数(供 lib.rs 的 generate_handler! 使用)
 pub use knowledge::*;
 pub use ops::*;
+pub use proposals::*;
 pub use providers::*;
 pub use servers::*;
 pub use sessions::*;

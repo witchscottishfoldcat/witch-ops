@@ -57,6 +57,17 @@ export interface ExecuteResult {
   success: boolean;
 }
 
+/** Agent 提案执行结果(execute_agent_proposal 返回,审批上下文由服务端构建) */
+export interface AgentExecutionResult {
+  proposal_id: string;
+  result: {
+    stdout: string;
+    stderr: string;
+    exit_code: number;
+  };
+  audit_id: number;
+}
+
 export interface AuditFilter {
   server_id?: number;
   session_id?: string;

@@ -11,7 +11,6 @@
 //   await session.sendMessage(userText, { onText, onProposal, onDone })
 
 import * as ipc from './ipc';
-import type { AuditContext, ExecuteResult } from '../types/backend';
 
 // ============ 类型 ============
 
@@ -216,16 +215,6 @@ Rules:
     this.history.push({ role: 'user', content: userText });
     const turn = await this.streamChat(callbacks);
     return turn;
-  }
-
-  /** 批准执行某个 Proposal(由 UI 在用户批准后调用) */
-  async executeProposal(call: AgentToolCall, ctx: AuditContext): Promise<ExecuteResult> {
-    const result = await ipc.executeCommand(
-      call.arguments.server_id as number,
-      call.arguments.command as string,
-      ctx,
-    );
-    return result;
   }
 
   /** 续轮:把执行结果塞回历史,继续对话 */

@@ -7,7 +7,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import type {
   Server, ServerInput, AuditLog, AuditFilter, Skill, QuickAction, Doc,
   Provider, ProviderInput, Container, ContainerAction, Service, ServerMetrics,
-  DirEntry, AuditContext, ExecuteResult,
+  DirEntry, AuditContext, ExecuteResult, AgentExecutionResult,
 } from '../types/backend';
 
 // ============ 凭证库 ============
@@ -188,6 +188,23 @@ export const renameAgentSession = (id: string, title: string) =>
   invoke<void>('rename_agent_session', { id, title });
 export const deleteAgentSession = (id: string) =>
   invoke<void>('delete_agent_session', { id });
+
+// ============ Agent 提案审批状态机(服务端强制)============
+// 前端只能创建提案/请求批准/请求拒绝;执行必须经 execute_agent_proposal,
+// 后端校验 approved 状态后才会执行,审批上下文(source/approved_by/proposal_id)由服务端构建。
+export const createAgentProposal = (
+  sessionId: string | null,
+  serverId: number,
+  toolName: string,
+  command: string | null,
+  args: string | null,
+) => invoke<string>('create_agent_proposal', { sessionId, serverId, toolName, command, args });
+export const approveAgentProposal = (id: string) =>
+  invoke<void>('approve_agent_proposal', { id });
+export const rejectAgentProposal = (id: string) =>
+  invoke<void>('reject_agent_proposal', { id });
+export const executeAgentProposal = (id: string) =>
+  invoke<AgentExecutionResult>('execute_agent_proposal', { id });
 
 // ============ 终端输出缓冲(解决"打开时序"问题)============
 //

@@ -181,14 +181,49 @@ pub async fn sftp_write_file(
     path: String,
     content: String,
 ) -> AppResult<()> {
-    let args = serde_json::json!({ "path": path });
-    audit_sftp_action(&state, server_id, "write_file", args, async {
+    // 审计上下文与重构前 audit_sftp_action 构造的完全一致(source=sftp),行为不变
+    let ctx = AuditContext {
+        source: "sftp".into(),
+        session_id: None,
+        tool_name: "write_file".into(),
+        command: None,
+        args: Some(serde_json::json!({ "path": path }).to_string()),
+        approved_by: Some("user".into()),
+        proposal_id: None,
+    };
+    write_file_with_ctx(&state, server_id, &path, &content, ctx).await.map(|_| ())
+}
+
+/// SFTP 写文件核心:执行写入 + 用给定审计上下文写审计日志,返回审计日志 ID。
+///
+/// 供 [`sftp_write_file`] 命令与 Agent 提案执行(`execute_agent_proposal` 的 write_file 分支)复用:
+/// Agent 路径由调用方传入服务端构建的 ctx(source=agent、approved_by、proposal_id),
+/// 前端无法伪造。Agent 路径审计写库失败 fail-closed(与 execute_and_audit 一致);
+/// 手动 SFTP 路径保持原行为(告警不吞结果)。
+pub async fn write_file_with_ctx(
+    state: &State<'_, AppState>,
+    server_id: i64,
+    path: &str,
+    content: &str,
+    ctx: AuditContext,
+) -> AppResult<i64> {
+    let server_host = fetch_server_host(state, server_id).await;
+    // args 缺省时补 {"path": ...}(sftp_write_file 路径);Agent 路径 ctx.args 已含完整参数 JSON
+    let ctx = AuditContext {
+        args: Some(
+            ctx.args
+                .unwrap_or_else(|| serde_json::json!({ "path": path }).to_string()),
+        ),
+        ..ctx
+    };
+
+    let result: AppResult<()> = async {
         let sftp = state.ssh.open_sftp(server_id).await?;
 
         use russh_sftp::protocol::OpenFlags;
         let mut file = sftp
             .open_with_flags(
-                &path,
+                path,
                 OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
             )
             .await
@@ -202,8 +237,37 @@ pub async fn sftp_write_file(
             .await
             .map_err(|e| AppError::Ssh(format!("flush 失败: {e}")))?;
         Ok(())
-    })
+    }
+    .await;
+
+    let (success, output) = match &result {
+        Ok(()) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
+    };
+    let audit_id = match log_action(
+        state.db(),
+        Some(server_id),
+        Some(&server_host),
+        success,
+        output.as_deref(),
+        &ctx,
+    )
     .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            if ctx.source == "agent" {
+                // fail-closed:文件已写入但审计缺失时,必须让 Agent 流程拿到明确错误
+                return Err(AppError::Internal(format!(
+                    "文件已写入服务器 {server_id},但审计日志写入失败: {e}"
+                )));
+            }
+            log::warn!("SFTP {} 审计写库失败: {e}", ctx.tool_name);
+            0
+        }
+    };
+    result?;
+    Ok(audit_id)
 }
 
 /// 删除文件

@@ -276,6 +276,11 @@ pub fn run() {
             commands::append_agent_message,
             commands::rename_agent_session,
             commands::delete_agent_session,
+            // Agent 提案审批状态机(服务端强制:审批/执行不可由前端伪造)
+            commands::create_agent_proposal,
+            commands::approve_agent_proposal,
+            commands::reject_agent_proposal,
+            commands::execute_agent_proposal,
             // 运维:监控 / 容器 / systemd
             commands::get_metrics,
             commands::list_containers,

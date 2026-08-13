@@ -20,7 +20,7 @@ const READ_ONLY_TOOLS = new Set(['get_metrics', 'read_file', 'get_skill']);
  */
 export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | null }> = ({ compact = false, sessionId = null }) => {
   const {
-    skills, servers, activeServerId, executeCommand, providers,
+    skills, servers, activeServerId, providers,
     upsertDoc, refreshAgentSessions, agentSessions,
   } = useApp();
 
@@ -383,7 +383,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       return;
     }
 
-    // 写工具:生成 proposal 卡片
+    // 写工具:生成 proposal 卡片(先在后端登记提案,拿回服务端生成的 id)
     let proposal: AgentProposal | null = null;
 
     if (call.name === 'run_command') {
@@ -401,7 +401,17 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
         } : m));
         finalizeMessage(agentMsgId); setIsRunning(false); return;
       }
-      const proposalId = `prop_${agentMsgId}`;
+      let proposalId: string;
+      try {
+        // 提案登记在后端(服务端审批状态机):id 由服务端生成,前端不再自造 prop_ id
+        proposalId = await ipc.createAgentProposal(sessionIdRef.current, sid, 'run_command', cmd, null);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : (e && typeof e === 'object' && 'message' in e) ? String((e as any).message) : String(e);
+        updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
+          ...m, content: `⚠ 创建执行提案失败: ${msg}`, streaming: false,
+        } : m));
+        finalizeMessage(agentMsgId); setIsRunning(false); return;
+      }
       turnRef.current.set(proposalId, turn);
       proposal = {
         id: proposalId,
@@ -422,7 +432,20 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
         } : m));
         finalizeMessage(agentMsgId); setIsRunning(false); return;
       }
-      const proposalId = `prop_${agentMsgId}`;
+      let proposalId: string;
+      try {
+        // 提案登记在后端(服务端审批状态机),args 存完整 {path, content} JSON
+        proposalId = await ipc.createAgentProposal(
+          sessionIdRef.current, sid, 'write_file', null,
+          JSON.stringify({ path, content }),
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : (e && typeof e === 'object' && 'message' in e) ? String((e as any).message) : String(e);
+        updateMessages(messagesRef.current.map(m => m.id === agentMsgId ? {
+          ...m, content: `⚠ 创建执行提案失败: ${msg}`, streaming: false,
+        } : m));
+        finalizeMessage(agentMsgId); setIsRunning(false); return;
+      }
       turnRef.current.set(proposalId, turn);
       proposal = {
         id: proposalId,
@@ -542,28 +565,30 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       let resultText: string;
       let execResult: ExecuteResult | undefined;
 
-      if (proposal.tool_name === 'run_command') {
-        execResult = await executeCommand(proposal.server_id, proposal.command, {
-          source: 'agent',
-          tool_name: 'run_command',
-          approved_by: 'user',
-          proposal_id: proposalId,
-        });
+      if (proposal.tool_name === 'run_command' || proposal.tool_name === 'write_file') {
+        // 服务端审批状态机:先批准,再经 execute_agent_proposal 执行。
+        // 后端校验提案必须处于 approved 状态才执行,审批上下文由服务端构建,
+        // 前端无法伪造;write_file 的 SFTP 写入也由后端完成。
+        await ipc.approveAgentProposal(proposalId);
+        const res = await ipc.executeAgentProposal(proposalId);
+        execResult = {
+          audit_id: res.audit_id,
+          stdout: res.result.stdout,
+          stderr: res.result.stderr,
+          exit_code: res.result.exit_code,
+          success: res.result.exit_code === 0,
+        };
         updateMessages(messagesRef.current.map(m => m.proposal?.id === proposalId ? {
           ...m, proposal: { ...m.proposal!, result: execResult }
         } : m));
         finalizeMessage(msg.id); // 执行结果写回 proposal,同样需要重新落盘
-        resultText = `命令执行完成。\nstdout:\n${execResult.stdout}\n${execResult.stderr ? 'stderr:\n' + execResult.stderr + '\n' : ''}退出码:${execResult.exit_code}`;
-      } else if (proposal.tool_name === 'write_file') {
-        const path = toolCall.arguments.path as string;
-        const content = toolCall.arguments.content as string;
-        await ipc.sftpWriteFile(proposal.server_id, path, content);
-        execResult = { audit_id: 0, stdout: `文件 ${path} 已写入(${content.length} 字符)`, stderr: '', exit_code: 0, success: true };
-        updateMessages(messagesRef.current.map(m => m.proposal?.id === proposalId ? {
-          ...m, proposal: { ...m.proposal!, result: execResult }
-        } : m));
-        finalizeMessage(msg.id); // 执行结果写回 proposal,同样需要重新落盘
-        resultText = `文件写入完成: ${path}(${content.length} 字符)`;
+        if (proposal.tool_name === 'write_file') {
+          const path = toolCall.arguments.path as string;
+          const content = toolCall.arguments.content as string;
+          resultText = `文件写入完成: ${path}(${content.length} 字符)`;
+        } else {
+          resultText = `命令执行完成。\nstdout:\n${execResult.stdout}\n${execResult.stderr ? 'stderr:\n' + execResult.stderr + '\n' : ''}退出码:${execResult.exit_code}`;
+        }
       } else {
         throw new Error(`不支持的审批工具: ${proposal.tool_name}`);
       }
@@ -598,7 +623,14 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     }
   };
 
-  const handleReject = (proposalId: string) => {
+  const handleReject = async (proposalId: string) => {
+    // 服务端状态机:rejected 落库。已批准/已执行的提案后端会拒绝此调用,
+    // 这里只告警不阻断 —— UI 状态更新照常执行。
+    try {
+      await ipc.rejectAgentProposal(proposalId);
+    } catch (e) {
+      console.warn('[Agent] 拒绝提案失败', e);
+    }
     let msgId = '';
     // 不在 setState updater 里捕获 msgId(updater 必须纯净,StrictMode 会双调);
     // 直接基于 messagesRef 计算新列表

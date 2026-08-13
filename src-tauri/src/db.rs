@@ -18,10 +18,16 @@ pub type Db = SqlitePool;
 ///   1. 新建 `migrations/00NN_xxx.sql`(按数字递增,保证顺序);
 ///   2. 在此数组末尾追加一行 `(文件名, include_str!(...))`。
 /// 已应用的迁移记录在 `_migrations` 表,重复启动不会重跑。
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "0001_init.sql",
-    include_str!("../migrations/0001_init.sql"),
-)];
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0001_init.sql",
+        include_str!("../migrations/0001_init.sql"),
+    ),
+    (
+        "0002_agent_proposals.sql",
+        include_str!("../migrations/0002_agent_proposals.sql"),
+    ),
+];
 
 /// 初始化数据库连接池并执行迁移。
 ///
@@ -124,11 +130,12 @@ mod tests {
 
         let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _migrations")
             .fetch_one(&pool).await.expect("查询 _migrations");
-        assert_eq!(applied, 1, "迁移只应记录一次");
+        assert_eq!(applied, 2, "迁移只应记录一次(0001 + 0002)");
 
-        // 0001 建的表必须存在
+        // 0001/0002 建的表必须存在
         for table in ["servers", "audit_logs", "skills", "quick_actions", "docs",
-                      "agent_sessions", "agent_providers", "vault_metadata"] {
+                      "agent_sessions", "agent_providers", "vault_metadata",
+                      "agent_proposals"] {
             let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
                 .fetch_one(&pool).await
                 .unwrap_or_else(|e| panic!("表 {table} 应存在: {e}"));
