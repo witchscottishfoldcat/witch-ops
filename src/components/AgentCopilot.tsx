@@ -104,8 +104,8 @@ export const AgentCopilot: React.FC = () => {
                 onClick={() => selectSession(s.id)}
                 style={{
                   padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
-                  background: activeSessionId === s.id ? 'rgba(139, 92, 246, 0.15)' : 'rgba(0,0,0,0.2)',
-                  border: `1px solid ${activeSessionId === s.id ? 'rgba(139, 92, 246, 0.3)' : 'var(--border-color)'}`,
+                  background: activeSessionId === s.id ? 'var(--chip-bg)' : 'var(--panel-inset-bg)',
+                  border: `1px solid ${activeSessionId === s.id ? 'var(--chip-border)' : 'var(--border-color)'}`,
                   display: 'flex', alignItems: 'center', gap: 6, transition: 'background 0.15s',
                 }}
               >
@@ -162,7 +162,7 @@ export const AgentCopilot: React.FC = () => {
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {enabledSkills.map(s => (
-                <div key={s.id} style={{ background: 'rgba(0,0,0,0.3)', padding: 8, borderRadius: 6, border: '1px solid var(--border-color)' }}>
+                <div key={s.id} style={{ background: 'var(--panel-inset-bg)', padding: 8, borderRadius: 6, border: '1px solid var(--border-color)' }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-main)' }}>{s.title}</div>
                 </div>
               ))}

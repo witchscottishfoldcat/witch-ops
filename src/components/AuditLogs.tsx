@@ -32,7 +32,7 @@ export const AuditLogs: React.FC = () => {
       {/* Audit Stats Header */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
         <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ background: 'rgba(6, 182, 212, 0.2)', padding: 10, borderRadius: 8, color: 'var(--accent-cyan)' }}>
+          <div style={{ background: 'var(--info-bg)', padding: 10, borderRadius: 8, color: 'var(--accent-cyan)' }}>
             <Terminal size={22} />
           </div>
           <div>
@@ -81,11 +81,11 @@ export const AuditLogs: React.FC = () => {
           value={filter.source || ''}
           onChange={e => setFilter({ ...filter, source: e.target.value || undefined })}
         >
-          <option value="" style={{ background: '#10141e' }}>全部分类 Source</option>
-          <option value="agent" style={{ background: '#10141e' }}>Agent 自动</option>
-          <option value="manual_terminal" style={{ background: '#10141e' }}>手动 PTY 终端</option>
-          <option value="quick_action" style={{ background: '#10141e' }}>快捷指令</option>
-          <option value="mcp_external" style={{ background: '#10141e' }}>MCP 外部调用</option>
+          <option value="" style={{ background: 'var(--apple-popover-bg)' }}>全部分类 Source</option>
+          <option value="agent" style={{ background: 'var(--apple-popover-bg)' }}>Agent 自动</option>
+          <option value="manual_terminal" style={{ background: 'var(--apple-popover-bg)' }}>手动 PTY 终端</option>
+          <option value="quick_action" style={{ background: 'var(--apple-popover-bg)' }}>快捷指令</option>
+          <option value="mcp_external" style={{ background: 'var(--apple-popover-bg)' }}>MCP 外部调用</option>
         </select>
 
         <select
@@ -94,9 +94,9 @@ export const AuditLogs: React.FC = () => {
           value={filter.server_id || ''}
           onChange={e => setFilter({ ...filter, server_id: e.target.value ? Number(e.target.value) : undefined })}
         >
-          <option value="" style={{ background: '#10141e' }}>全部服务器节点</option>
+          <option value="" style={{ background: 'var(--apple-popover-bg)' }}>全部服务器节点</option>
           {servers.map(s => (
-            <option key={s.id} value={s.id} style={{ background: '#10141e' }}>{s.name} ({s.host})</option>
+            <option key={s.id} value={s.id} style={{ background: 'var(--apple-popover-bg)' }}>{s.name} ({s.host})</option>
           ))}
         </select>
 
@@ -134,7 +134,7 @@ export const AuditLogs: React.FC = () => {
                     fontSize: 11,
                     padding: '2px 6px',
                     borderRadius: 4,
-                    background: log.source === 'agent' ? 'rgba(139, 92, 246, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                    background: log.source === 'agent' ? 'var(--chip-bg)' : 'var(--panel-inset-bg)',
                     color: log.source === 'agent' ? 'var(--accent-purple)' : 'var(--text-main)'
                   }}>
                     {log.source}
@@ -142,7 +142,7 @@ export const AuditLogs: React.FC = () => {
                 </td>
                 <td>{log.server_host}</td>
                 <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)' }}>{log.tool_name}</td>
-                <td style={{ fontFamily: 'var(--font-mono)', color: '#fff', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-main)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {log.command || '-'}
                 </td>
                 <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{log.duration_ms} ms</td>
@@ -190,14 +190,14 @@ export const AuditLogs: React.FC = () => {
 
             <div style={{ marginBottom: 12 }}>
               <label style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>执行 Shell 指令:</label>
-              <div style={{ background: '#04060a', padding: 10, borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent-cyan)' }}>
+              <div style={{ background: 'var(--code-bg)', padding: 10, borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent-cyan)' }}>
                 {selectedLog.command}
               </div>
             </div>
 
             <div>
               <label style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>日志输出 (Stdout / Stderr 截断到 2000 字符):</label>
-              <div style={{ background: '#04060a', padding: 10, borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12, color: '#e5e7eb', maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+              <div style={{ background: 'var(--code-bg)', padding: 10, borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--code-fg)', maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
                 {selectedLog.output}
               </div>
             </div>

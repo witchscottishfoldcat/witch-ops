@@ -62,9 +62,9 @@ export const VaultModal: React.FC = () => {
 
   if (!isVaultInitialized) {
     return (
-      <div className="glass-card" style={{ marginBottom: 20, borderLeft: '4px solid var(--apple-blue)', background: 'rgba(10, 132, 255, 0.05)' }}>
+      <div className="glass-card" style={{ marginBottom: 20, borderLeft: '4px solid var(--apple-blue)', background: 'var(--info-bg)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-          <div style={{ background: 'rgba(10, 132, 255, 0.2)', padding: 8, borderRadius: 8, color: 'var(--apple-blue)' }}>
+          <div style={{ background: 'var(--info-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-blue)' }}>
             <Key size={20} />
           </div>
           <div>
@@ -195,7 +195,7 @@ export const VaultModal: React.FC = () => {
       </div>
 
       {showRecover && (
-        <div style={{ marginTop: 10, padding: 12, borderRadius: 8, background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ marginTop: 10, padding: 12, borderRadius: 8, background: 'var(--panel-inset-bg)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* 方案一:钥匙串恢复 */}
           <form onSubmit={handleRecover}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>

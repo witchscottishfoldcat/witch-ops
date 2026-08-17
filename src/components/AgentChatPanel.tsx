@@ -683,7 +683,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {/* 节点信息条 */}
       <div style={{
-        background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)',
+        background: 'var(--chip-bg)', border: '1px solid var(--chip-border)',
         padding: compact ? '6px 10px' : '8px 12px', borderRadius: 6, fontSize: compact ? 11 : 12,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: compact ? 8 : 12, flexShrink: 0,
       }}>
@@ -724,7 +724,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       {/* 历史对话折叠列表(compact 模式也可用) */}
       {showHistory && (
         <div style={{
-          background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-color)',
+          background: 'var(--panel-inset-bg)', border: '1px solid var(--border-color)',
           borderRadius: 6, padding: 6, marginBottom: 8, maxHeight: 200, overflowY: 'auto',
           display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0,
         }}>
@@ -734,7 +734,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
               onClick={() => switchSession(s.id)}
               style={{
                 padding: '5px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11,
-                background: sessionIdRef.current === s.id ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+                background: sessionIdRef.current === s.id ? 'var(--chip-bg)' : 'transparent',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}
             >
@@ -762,9 +762,9 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
             )}
             <div style={{ minWidth: 0 }}>
               <div style={{
-                background: msg.sender === 'user' ? 'rgba(6, 182, 212, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                background: msg.sender === 'user' ? 'var(--bubble-user-bg)' : 'var(--bubble-agent-bg)',
                 border: '1px solid',
-                borderColor: msg.sender === 'user' ? 'rgba(6, 182, 212, 0.3)' : 'var(--border-color)',
+                borderColor: msg.sender === 'user' ? 'var(--bubble-user-border)' : 'var(--bubble-agent-border)',
                 padding: compact ? '8px 10px' : '10px 14px', borderRadius: 10,
                 fontSize: compact ? 12 : 13, lineHeight: 1.6, wordBreak: 'break-word',
               }}>
@@ -843,13 +843,13 @@ const ProposalCard: React.FC<{
   const filePath = isWriteFile ? String(proposal.toolCall?.arguments.path ?? '') : '';
 
   return (
-    <div style={{ marginTop: 10, background: '#070a10', border: '1px solid var(--accent-purple)', borderRadius: 8, padding: compact ? 8 : 12 }}>
+    <div style={{ marginTop: 10, background: 'var(--code-bg)', border: '1px solid var(--accent-purple)', borderRadius: 8, padding: compact ? 8 : 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-purple)', display: 'flex', alignItems: 'center', gap: 4 }}>
           {isWriteFile ? <FileText size={12} /> : <Terminal size={12} />}
           {isWriteFile ? '提议写入文件' : '提议执行命令'}
         </span>
-        <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4 }}>
+        <span style={{ fontSize: 10, background: 'var(--chip-bg)', padding: '2px 6px', borderRadius: 4 }}>
           {proposal.tool_name}
           {proposal.safe_to_run && ' · 安全'}
         </span>
@@ -862,7 +862,7 @@ const ProposalCard: React.FC<{
           </div>
           <div style={{
             fontFamily: 'var(--font-mono)', fontSize: compact ? 11 : 12,
-            background: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 4,
+            background: 'var(--code-bg)', padding: 8, borderRadius: 4,
             color: 'var(--text-main)', marginBottom: 10,
             maxHeight: 120, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
           }}>
@@ -872,7 +872,7 @@ const ProposalCard: React.FC<{
       ) : (
         <div style={{
           fontFamily: 'var(--font-mono)', fontSize: compact ? 11 : 12,
-          background: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 4,
+          background: 'var(--code-bg)', padding: 8, borderRadius: 4,
           color: 'var(--accent-cyan)', marginBottom: 10,
           overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
         }}>
@@ -908,7 +908,7 @@ const ProposalCard: React.FC<{
         </div>
       )}
       {proposal.result && (
-        <div style={{ marginTop: 8, fontSize: 11, background: '#020305', padding: 8, borderRadius: 4, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', maxHeight: 100, overflowY: 'auto' }}>
+        <div style={{ marginTop: 8, fontSize: 11, background: 'var(--code-bg)', padding: 8, borderRadius: 4, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', maxHeight: 100, overflowY: 'auto' }}>
           {proposal.result.stdout}
         </div>
       )}

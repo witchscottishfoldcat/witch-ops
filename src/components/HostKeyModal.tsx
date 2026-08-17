@@ -26,7 +26,7 @@ export const HostKeyModal: React.FC = () => {
         </p>
 
         <div style={{
-          background: '#04060a',
+          background: 'var(--code-bg)',
           border: '1px solid var(--border-color)',
           borderRadius: 6,
           padding: '12px',

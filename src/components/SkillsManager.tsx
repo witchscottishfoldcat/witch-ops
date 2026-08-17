@@ -128,7 +128,7 @@ export const SkillsManager: React.FC = () => {
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>触发关键词 (Triggers):</div>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                   {triggers.map(tr => (
-                    <span key={tr} style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-purple)', fontSize: 11, padding: '2px 6px', borderRadius: 4 }}>
+                    <span key={tr} style={{ background: 'var(--chip-bg)', color: 'var(--accent-purple)', fontSize: 11, padding: '2px 6px', borderRadius: 4 }}>
                       #{tr}
                     </span>
                   ))}
@@ -137,13 +137,13 @@ export const SkillsManager: React.FC = () => {
 
               {/* Content Snippet */}
               <div style={{
-                background: '#04060a',
+                background: 'var(--code-bg)',
                 border: '1px solid var(--border-color)',
                 borderRadius: 6,
                 padding: 10,
                 fontSize: 12,
                 fontFamily: 'var(--font-mono)',
-                color: '#d1d5db',
+                color: 'var(--code-fg)',
                 flex: 1,
                 maxHeight: 120,
                 overflowY: 'auto',
@@ -157,7 +157,7 @@ export const SkillsManager: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', gap: 4 }}>
                   {tags.map(t => (
-                    <span key={t} style={{ background: 'rgba(255,255,255,0.06)', fontSize: 10, padding: '1px 5px', borderRadius: 3, color: 'var(--text-dim)' }}>
+                    <span key={t} style={{ background: 'var(--panel-inset-bg)', fontSize: 10, padding: '1px 5px', borderRadius: 3, color: 'var(--text-dim)' }}>
                       {t}
                     </span>
                   ))}
@@ -236,9 +236,9 @@ export const SkillsManager: React.FC = () => {
                     value={editingSkill.risk_level}
                     onChange={e => setEditingSkill({ ...editingSkill, risk_level: e.target.value as any })}
                   >
-                    <option value="low" style={{ background: '#10141e' }}>低风险 (Low)</option>
-                    <option value="medium" style={{ background: '#10141e' }}>中风险 (Medium)</option>
-                    <option value="high" style={{ background: '#10141e' }}>高风险 (High)</option>
+                    <option value="low" style={{ background: 'var(--apple-popover-bg)' }}>低风险 (Low)</option>
+                    <option value="medium" style={{ background: 'var(--apple-popover-bg)' }}>中风险 (Medium)</option>
+                    <option value="high" style={{ background: 'var(--apple-popover-bg)' }}>高风险 (High)</option>
                   </select>
                 </div>
 

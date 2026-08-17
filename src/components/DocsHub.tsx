@@ -123,11 +123,11 @@ export const DocsHub: React.FC = () => {
             </div>
 
             <div style={{
-              background: '#04060a',
+              background: 'var(--code-bg)',
               padding: 10,
               borderRadius: 6,
               fontSize: 12,
-              color: '#d1d5db',
+              color: 'var(--code-fg)',
               flex: 1,
               maxHeight: 120,
               overflowY: 'auto',
@@ -193,7 +193,7 @@ export const DocsHub: React.FC = () => {
               <button className="btn btn-secondary" style={{ padding: 4 }} onClick={() => setActiveDoc(null)}><X size={16} /></button>
             </div>
 
-            <div style={{ background: '#030509', padding: 16, borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 12, color: '#e5e7eb', maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+            <div style={{ background: 'var(--code-bg)', padding: 16, borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--code-fg)', maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
               {activeDoc.content}
             </div>
           </div>
@@ -219,9 +219,9 @@ export const DocsHub: React.FC = () => {
                   <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>类型</label>
                   <select className="input-field" value={editingDoc.type}
                     onChange={e => setEditingDoc({ ...editingDoc, type: e.target.value as Doc['type'] })}>
-                    <option value="sop" style={{ background: '#10141e' }}>标准 SOP</option>
-                    <option value="postmortem" style={{ background: '#10141e' }}>事故复盘</option>
-                    <option value="change_record" style={{ background: '#10141e' }}>变更记录</option>
+                    <option value="sop" style={{ background: 'var(--apple-popover-bg)' }}>标准 SOP</option>
+                    <option value="postmortem" style={{ background: 'var(--apple-popover-bg)' }}>事故复盘</option>
+                    <option value="change_record" style={{ background: 'var(--apple-popover-bg)' }}>变更记录</option>
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>

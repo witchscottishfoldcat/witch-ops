@@ -151,7 +151,7 @@ export const ServerManager: React.FC = () => {
               className="glass-card"
               style={{
                 borderColor: isSelected ? 'var(--accent-purple)' : undefined,
-                boxShadow: isSelected ? '0 0 15px rgba(139, 92, 246, 0.2)' : undefined
+                boxShadow: isSelected ? '0 0 15px var(--chip-border)' : undefined
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -202,17 +202,17 @@ export const ServerManager: React.FC = () => {
               {/* Tags */}
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
                 {tags.map(t => (
-                  <span key={t} style={{ background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-muted)', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>
+                  <span key={t} style={{ background: 'var(--panel-inset-bg)', color: 'var(--text-muted)', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>
                     #{t}
                   </span>
                 ))}
               </div>
 
               {/* Server Metadata */}
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, background: 'rgba(0, 0, 0, 0.2)', padding: 8, borderRadius: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, background: 'var(--panel-inset-bg)', padding: 8, borderRadius: 6 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span>认证类型:</span>
-                  <span style={{ color: '#fff', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ color: 'var(--text-main)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     {s.auth_method === 'private_key' ? <><KeyRound size={13} /> SSH 私钥</> : <><Lock size={13} /> 密码认证</>}
                   </span>
                 </div>
@@ -317,7 +317,7 @@ export const ServerManager: React.FC = () => {
                     gap: 8,
                     padding: '8px 12px',
                     borderRadius: 8,
-                    background: 'rgba(128, 128, 128, 0.08)',
+                    background: 'var(--panel-inset-bg)',
                     border: '1px solid var(--apple-border)',
                     color: 'var(--apple-text-muted)',
                     fontSize: 11,
@@ -386,8 +386,8 @@ export const ServerManager: React.FC = () => {
                     }}
                     style={{ cursor: 'pointer' }}
                   >
-                    <option value="password" style={{ background: '#1c1c1e' }}><Lock size={13} /> 密码认证</option>
-                    <option value="private_key" style={{ background: '#1c1c1e' }}><KeyRound size={13} /> SSH 私钥</option>
+                    <option value="password" style={{ background: 'var(--apple-popover-bg)' }}><Lock size={13} /> 密码认证</option>
+                    <option value="private_key" style={{ background: 'var(--apple-popover-bg)' }}><KeyRound size={13} /> SSH 私钥</option>
                   </select>
                 </div>
               </div>

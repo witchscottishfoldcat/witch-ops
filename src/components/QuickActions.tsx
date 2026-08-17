@@ -85,7 +85,7 @@ export const QuickActions: React.FC = () => {
         </button>
       </div>
 
-      <div style={{ background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 20 }}>
+      <div style={{ background: 'var(--info-bg)', border: '1px solid var(--info-border)', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 20 }}>
         当前目标服务器: <strong>{currentServer?.name || '未选择'}</strong> ({currentServer?.host})
       </div>
 
@@ -105,7 +105,7 @@ export const QuickActions: React.FC = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   <Zap size={18} style={{ color: 'var(--accent-cyan)' }} />
                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>{action.name}</h3>
-                  <span className="badge" style={{ background: 'rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                  <span className="badge" style={{ background: 'var(--panel-inset-bg)', color: 'var(--text-muted)' }}>
                     {action.approval === 'always_approve' ? '自动核准' : action.approval === 'auto_review' ? 'Auto Review' : '需要二次确认'}
                   </span>
                 </div>
@@ -113,7 +113,7 @@ export const QuickActions: React.FC = () => {
                   {steps.map((st, idx) => (
                     <React.Fragment key={idx}>
                       <div style={{
-                        background: '#04060a', border: '1px solid var(--border-color)',
+                        background: 'var(--code-bg)', border: '1px solid var(--border-color)',
                         padding: '6px 10px', borderRadius: 6, fontFamily: 'var(--font-mono)',
                         fontSize: 12, color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: 6,
                       }}>
@@ -182,7 +182,7 @@ export const QuickActions: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto', marginBottom: 20 }}>
               {pendingQuickAction.commands.map((c, i) => (
                 <div key={i} style={{
-                  background: '#04060a', border: '1px solid var(--border-color)', borderRadius: 6,
+                  background: 'var(--code-bg)', border: '1px solid var(--border-color)', borderRadius: 6,
                   padding: '8px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
                   color: 'var(--accent-cyan)', wordBreak: 'break-all',
                 }}>
@@ -243,9 +243,9 @@ const QuickActionEditor: React.FC<{
               <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>审批策略</label>
               <select className="input-field" value={action.approval}
                 onChange={e => onChange({ ...action, approval: e.target.value as QuickAction['approval'] })}>
-                <option value="always_ask" style={{ background: '#10141e' }}>需要二次确认(每次弹窗)</option>
-                <option value="auto_review" style={{ background: '#10141e' }}>Auto Review(自动审查)</option>
-                <option value="always_approve" style={{ background: '#10141e' }}>自动核准(不弹窗)</option>
+                <option value="always_ask" style={{ background: 'var(--apple-popover-bg)' }}>需要二次确认(每次弹窗)</option>
+                <option value="auto_review" style={{ background: 'var(--apple-popover-bg)' }}>Auto Review(自动审查)</option>
+                <option value="always_approve" style={{ background: 'var(--apple-popover-bg)' }}>自动核准(不弹窗)</option>
               </select>
             </div>
           </div>
@@ -261,7 +261,7 @@ const QuickActionEditor: React.FC<{
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {steps.map((step, idx) => (
                 <div key={idx} style={{
-                  background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)',
+                  background: 'var(--panel-inset-bg)', border: '1px solid var(--border-color)',
                   borderRadius: 6, padding: 10,
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>

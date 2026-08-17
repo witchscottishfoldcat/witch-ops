@@ -46,7 +46,7 @@ export const MetricsDashboard: React.FC = () => {
             </span>
             <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent-cyan)' }}>{cpuPercent.toFixed(1)}%</span>
           </div>
-          <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ height: 8, background: 'var(--panel-inset-bg)', borderRadius: 4, overflow: 'hidden' }}>
             <div style={{ width: `${cpuPercent}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))' }} />
           </div>
         </div>
@@ -59,7 +59,7 @@ export const MetricsDashboard: React.FC = () => {
             </span>
             <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent-purple)' }}>{memPercent}%</span>
           </div>
-          <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
+          <div style={{ height: 8, background: 'var(--panel-inset-bg)', borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
             <div style={{ width: `${memPercent}%`, height: '100%', background: 'var(--accent-purple)' }} />
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-dim)', display: 'flex', justifyContent: 'space-between' }}>
@@ -89,7 +89,7 @@ export const MetricsDashboard: React.FC = () => {
             <span style={{ fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <Clock size={16} style={{ color: 'var(--accent-pink)' }} /> Swap 交换区
             </span>
-            <span style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>
+            <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-main)' }}>
               {swapPercent}%
             </span>
           </div>
@@ -109,7 +109,7 @@ export const MetricsDashboard: React.FC = () => {
           {metrics.disks.map((d, idx) => {
             const pct = Math.min(100, Math.max(0, d.usage_percent));
             return (
-            <div key={idx} style={{ background: 'rgba(0,0,0,0.3)', padding: 12, borderRadius: 8, border: '1px solid var(--border-color)' }}>
+            <div key={idx} style={{ background: 'var(--panel-inset-bg)', padding: 12, borderRadius: 8, border: '1px solid var(--border-color)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <div>
                   <strong style={{ fontSize: 13 }}>{d.mount}</strong>
@@ -120,7 +120,7 @@ export const MetricsDashboard: React.FC = () => {
                 </span>
               </div>
 
-              <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
+              <div style={{ height: 6, background: 'var(--panel-inset-bg)', borderRadius: 3, overflow: 'hidden', marginBottom: 4 }}>
                 <div style={{
                   width: `${pct}%`,
                   height: '100%',

@@ -148,7 +148,7 @@ export const SettingsManager: React.FC = () => {
               </div>
 
               {/* API Key 状态(密钥只存后端,前端永远只见掩码) */}
-              <div style={{ background: '#04060a', padding: 8, borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, border: '1px solid var(--border-color)' }}>
+              <div style={{ background: 'var(--code-bg)', padding: 8, borderRadius: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, border: '1px solid var(--border-color)' }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent-cyan)' }}>
                   {p.has_key ? '••••••••••••••••••••' : '(未设置 API Key)'}
                 </span>
@@ -159,13 +159,13 @@ export const SettingsManager: React.FC = () => {
 
               {/* Default Model */}
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
-                默认模型: <strong style={{ color: '#fff' }}>{p.default_model || '未设置'}</strong>
+                默认模型: <strong style={{ color: 'var(--text-main)' }}>{p.default_model || '未设置'}</strong>
               </div>
 
               {/* Supported Models */}
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 'auto' }}>
                 {models.map(m => (
-                  <span key={m} style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent-purple)', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>
+                  <span key={m} style={{ background: 'var(--chip-bg)', color: 'var(--accent-purple)', fontSize: 10, padding: '2px 6px', borderRadius: 4 }}>
                     {m}
                   </span>
                 ))}

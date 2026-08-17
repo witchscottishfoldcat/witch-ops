@@ -179,7 +179,7 @@ export const SftpBrowser: React.FC = () => {
             <React.Fragment key={idx}>
               <ChevronRight size={12} style={{ color: 'var(--text-dim)' }} />
               <span
-                style={{ cursor: 'pointer', color: idx === pathParts.length - 1 ? '#fff' : 'var(--accent-cyan)' }}
+                style={{ cursor: 'pointer', color: idx === pathParts.length - 1 ? 'var(--text-main)' : 'var(--accent-cyan)' }}
                 onClick={() => setSftpPath('/' + pathParts.slice(0, idx + 1).join('/'))}
               >
                 {part}

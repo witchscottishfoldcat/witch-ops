@@ -18,7 +18,7 @@ export const ServicesManager: React.FC = () => {
         </div>
       </div>
 
-      <div style={{ background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 20 }}>
+      <div style={{ background: 'var(--info-bg)', border: '1px solid var(--info-border)', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 20 }}>
         目标服务器: <strong>{currentServer?.name || 'Server'}</strong> ({currentServer?.host})
       </div>
 
@@ -38,7 +38,7 @@ export const ServicesManager: React.FC = () => {
           <tbody>
             {services.map((svc, idx) => (
               <tr key={idx}>
-                <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#fff' }}>{svc.name}</td>
+                <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-main)' }}>{svc.name}</td>
                 <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{svc.description}</td>
                 <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>{svc.load_state}</td>
                 <td>

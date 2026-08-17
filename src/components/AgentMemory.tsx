@@ -145,8 +145,8 @@ export const AgentMemory: React.FC = () => {
                   onClick={() => setSelectedId(s.id)}
                   style={{
                     padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
-                    background: isActive ? 'rgba(139, 92, 246, 0.12)' : 'rgba(0,0,0,0.2)',
-                    border: `1px solid ${isActive ? 'rgba(139, 92, 246, 0.3)' : 'var(--border-color)'}`,
+                    background: isActive ? 'var(--chip-bg)' : 'var(--panel-inset-bg)',
+                    border: `1px solid ${isActive ? 'var(--chip-border)' : 'var(--border-color)'}`,
                     transition: 'background 0.15s',
                   }}
                 >
@@ -257,9 +257,9 @@ const MessagePreview: React.FC<{ msg: AgentMessage }> = ({ msg }) => {
       )}
       <div style={{ minWidth: 0 }}>
         <div style={{
-          background: isUser ? 'rgba(6, 182, 212, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+          background: isUser ? 'var(--bubble-user-bg)' : 'var(--bubble-agent-bg)',
           border: '1px solid',
-          borderColor: isUser ? 'rgba(6, 182, 212, 0.25)' : 'var(--border-color)',
+          borderColor: isUser ? 'var(--bubble-user-border)' : 'var(--bubble-agent-border)',
           padding: '10px 14px', borderRadius: 10,
           fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word',
         }}>
@@ -268,7 +268,7 @@ const MessagePreview: React.FC<{ msg: AgentMessage }> = ({ msg }) => {
           {/* Proposal 卡片(只读) */}
           {msg.proposal && (
             <div style={{
-              marginTop: 10, background: '#070a10',
+              marginTop: 10, background: 'var(--code-bg)',
               border: '1px solid var(--accent-purple)', borderRadius: 8, padding: 10,
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -284,14 +284,14 @@ const MessagePreview: React.FC<{ msg: AgentMessage }> = ({ msg }) => {
               </div>
               <div style={{
                 fontFamily: 'var(--font-mono)', fontSize: 11,
-                background: 'rgba(0,0,0,0.5)', padding: 6, borderRadius: 4,
+                background: 'var(--code-bg)', padding: 6, borderRadius: 4,
                 color: 'var(--accent-cyan)', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
               }}>
                 {msg.proposal.command}
               </div>
               {msg.proposal.result && (
                 <div style={{
-                  marginTop: 6, fontSize: 10, background: '#020305', padding: 6, borderRadius: 4,
+                  marginTop: 6, fontSize: 10, background: 'var(--code-bg)', padding: 6, borderRadius: 4,
                   color: 'var(--text-muted)', fontFamily: 'var(--font-mono)',
                   maxHeight: 80, overflowY: 'auto', whiteSpace: 'pre-wrap',
                 }}>
@@ -307,7 +307,7 @@ const MessagePreview: React.FC<{ msg: AgentMessage }> = ({ msg }) => {
       </div>
       {isUser && (
         <div style={{
-          background: 'rgba(6, 182, 212, 0.3)', color: 'var(--accent-cyan)', width: 26, height: 26,
+          background: 'var(--bubble-user-bg)', color: 'var(--accent-cyan)', width: 26, height: 26,
           borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
         }}>
           <User size={14} />

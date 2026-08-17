@@ -25,7 +25,7 @@ function renderInline(text: string, keyBase: string): React.ReactNode[] {
     } else if (token.startsWith('`')) {
       nodes.push(
         <code key={`${keyBase}-c-${i}`} style={{
-          background: 'rgba(100, 210, 255, 0.12)', color: 'var(--accent-cyan)',
+          background: 'var(--info-bg)', color: 'var(--accent-cyan)',
           padding: '1px 5px', borderRadius: 3, fontSize: '0.9em',
           fontFamily: 'var(--font-mono)',
         }}>
@@ -70,7 +70,7 @@ export const MarkdownText: React.FC<{ content: string; fontSize?: number }> = ({
         // 结束代码块
         blocks.push(
           <pre key={`code-${blocks.length}`} style={{
-            background: 'rgba(0, 0, 0, 0.45)', border: '1px solid var(--border-color)',
+            background: 'var(--code-bg)', border: '1px solid var(--code-border)',
             borderRadius: 6, padding: '10px 12px', margin: '6px 0',
             overflowX: 'auto', fontFamily: 'var(--font-mono)',
             fontSize: fontSize - 1, lineHeight: 1.5,
@@ -163,7 +163,7 @@ export const MarkdownText: React.FC<{ content: string; fontSize?: number }> = ({
   if (trailingCode) {
     blocks.push(
       <pre key={`code-end`} style={{
-        background: 'rgba(0, 0, 0, 0.45)', border: '1px solid var(--border-color)',
+        background: 'var(--code-bg)', border: '1px solid var(--code-border)',
         borderRadius: 6, padding: '10px 12px', margin: '6px 0',
         overflowX: 'auto', fontFamily: 'var(--font-mono)',
         fontSize: fontSize - 1, lineHeight: 1.5,

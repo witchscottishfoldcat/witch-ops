@@ -26,7 +26,7 @@ export const ContainersManager: React.FC = () => {
         </div>
       </div>
 
-      <div style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.2)', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 20 }}>
+      <div style={{ background: 'var(--chip-bg)', border: '1px solid var(--chip-border)', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 20 }}>
         当前节点: <strong>{currentServer?.name || 'Server'}</strong> ({currentServer?.host})
       </div>
 
@@ -50,7 +50,7 @@ export const ContainersManager: React.FC = () => {
             </div>
 
             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 14 }}>
-              Runtime: <strong style={{ color: '#fff' }}>{c.runtime}</strong> | Status: {c.status}
+              Runtime: <strong style={{ color: 'var(--text-main)' }}>{c.runtime}</strong> | Status: {c.status}
             </div>
 
             {/* Action Buttons */}
