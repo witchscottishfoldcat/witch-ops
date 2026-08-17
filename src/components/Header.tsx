@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Lock, Unlock, Server, Bot, Terminal, Search, Palette, Moon, Sun, Heart, Zap, X, Minus, Plus } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getVersion } from '@tauri-apps/api/app';
 import { CustomSelect } from './CustomSelect';
 
 const appWindow = getCurrentWindow();
@@ -11,6 +12,16 @@ export const Header: React.FC = () => {
     isVaultUnlocked, isVaultInitialized, lockVault, servers, activeServerId, setActiveServerId,
     connectedServerIds, setActiveView, theme, setTheme
   } = useApp();
+
+  // 版本徽标:从 tauri 运行时读取,与 tauri.conf.json 保持一致(浏览器环境回退 'dev')
+  const [appVersion, setAppVersion] = useState<string>('dev');
+  useEffect(() => {
+    let cancelled = false;
+    getVersion()
+      .then(v => { if (!cancelled) setAppVersion(v); })
+      .catch(() => { /* 非 Tauri 环境(纯 Web 预览)时保持 dev */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const activeServer = servers.find(s => s.id === activeServerId);
 
@@ -58,7 +69,7 @@ export const Header: React.FC = () => {
           <img src="/logo.svg" alt="Witchcat" style={{ width: 22, height: 22, borderRadius: 6 }} draggable={false} />
           <span>Witchcat<span style={{ color: 'var(--apple-purple)', marginLeft: 2 }}>Ops</span></span>
           <span style={{ fontSize: 10, background: 'rgba(191, 90, 242, 0.15)', color: 'var(--apple-purple)', padding: '1px 6px', borderRadius: 10, marginLeft: 4, fontWeight: 600 }}>
-            v2.4 Pro
+            v{appVersion}
           </span>
         </div>
 
