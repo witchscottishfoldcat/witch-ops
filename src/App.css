@@ -32,6 +32,7 @@
 
   --apple-blur: blur(40px) saturate(200%);
   --apple-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+  --apple-shadow-hover: 0 14px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.08);
 
   /* 兼容别名:组件引用的通用变量 → Apple 调色板
      (var() 在使用时解析,浅色主题覆盖 --apple-* 后别名自动跟随) */
@@ -48,8 +49,8 @@
   --border-color: var(--apple-border);
 
   /* 终端(xterm)专用 */
-  --term-bg: #0b0d12;
-  --term-header-bg: rgba(24, 26, 32, 0.92);
+  --term-bg: #0d1117;
+  --term-header-bg: rgba(22, 27, 34, 0.92);
   /* 语义化表面色:代码块 / 内嵌面板 / 标签 / 信息横幅 / 消息气泡(组件引用,随主题自动跟随) */
   --code-bg: #0d0f15;
   --code-fg: #e6e8ec;
@@ -93,10 +94,11 @@
   --apple-text-muted: #6e6e73;
   --apple-text-dim: #86868b;
 
-  --apple-shadow: 0 8px 24px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255,255,255,1);
+  --apple-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255,255,255,1);
+  --apple-shadow-hover: 0 12px 32px rgba(0, 0, 0, 0.12), 0 4px 10px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255,255,255,1);
 
-  --term-bg: #f5f5f7;
-  --term-header-bg: rgba(255, 255, 255, 0.85);
+  --term-bg: #ffffff;
+  --term-header-bg: rgba(246, 248, 250, 0.95);
   --code-bg: #f0f0f4;
   --code-fg: #1d1d1f;
   --code-border: rgba(0, 0, 0, 0.08);
@@ -138,10 +140,11 @@
   --apple-text-muted: #61666d;
   --apple-text-dim: #9499a0;
 
-  --apple-shadow: 0 6px 24px rgba(255, 102, 153, 0.12), inset 0 1px 0 rgba(255,255,255,1);
+  --apple-shadow: 0 8px 24px rgba(255, 102, 153, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255,255,255,1);
+  --apple-shadow-hover: 0 12px 32px rgba(255, 102, 153, 0.18), 0 4px 10px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255,255,255,1);
 
-  --term-bg: #fdf2f7;
-  --term-header-bg: rgba(255, 242, 247, 0.9);
+  --term-bg: #ffffff;
+  --term-header-bg: rgba(255, 247, 250, 0.95);
   --code-bg: #fbeef4;
   --code-fg: #3a3a3c;
   --code-border: rgba(251, 114, 153, 0.18);
@@ -184,6 +187,7 @@
   --apple-text-dim: #6b7280;
 
   --apple-shadow: 0 8px 30px rgba(139, 92, 246, 0.25), inset 0 1px 0 rgba(255,255,255,0.05);
+  --apple-shadow-hover: 0 12px 38px rgba(139, 92, 246, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
 
   --term-bg: #0f141e;
   --term-header-bg: rgba(13, 18, 28, 0.92);
@@ -228,7 +232,8 @@
   --apple-text-muted: #939293;
   --apple-text-dim: #727072;
 
-  --apple-shadow: 0 8px 25px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+  --apple-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+  --apple-shadow-hover: 0 14px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.08);
 
   --term-bg: #2d2a2e;
   --term-header-bg: rgba(39, 36, 40, 0.92);
@@ -639,57 +644,121 @@ select option {
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* Terminal View macOS iTerm Style(底色跟随主题 --term-*) */
+/* Terminal View macOS Glass Window */
 .terminal-window {
-  background: var(--term-bg);
+  background: var(--apple-card-bg);
+  backdrop-filter: var(--apple-blur);
   border: 1px solid var(--apple-border);
   border-radius: var(--apple-radius-md);
   display: flex;
   flex-direction: column;
   height: 100%;
-  font-family: var(--font-mono);
   box-shadow: var(--apple-shadow);
+  overflow: hidden;
+  position: relative;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .terminal-header {
-  height: 38px;
+  height: 42px;
+  min-height: 42px;
   background: var(--term-header-bg);
   border-bottom: 1px solid var(--apple-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
+  gap: 10px;
+  backdrop-filter: var(--apple-blur);
+  flex-shrink: 0;
 }
 
 .terminal-tabs {
   display: flex;
-  gap: 4px;
-}
-
-.terminal-tab {
-  padding: 4px 12px;
-  border-radius: 6px 6px 0 0;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--apple-text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  display: flex;
   align-items: center;
   gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+  min-width: 0;
+}
+.terminal-tabs::-webkit-scrollbar { display: none; }
+
+.terminal-tab {
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--apple-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-apple);
-  transition: background 0.15s, color 0.15s;
+  border: 1px solid transparent;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  user-select: none;
 }
 
 .terminal-tab:hover:not(.active) {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(128, 128, 128, 0.16);
   color: var(--apple-text);
 }
 
 .terminal-tab.active {
-  background: rgba(139, 92, 246, 0.15);
-  color: #fff;
-  border-bottom: 2px solid var(--accent-purple);
-  font-weight: 500;
+  background: var(--chip-bg);
+  color: var(--apple-text);
+  border-color: var(--chip-border);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.terminal-tab .tab-close-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  opacity: 0.55;
+  transition: all 0.15s ease;
+}
+
+.terminal-tab .tab-close-icon:hover {
+  opacity: 1;
+  background: rgba(255, 69, 58, 0.2);
+  color: var(--apple-red);
+}
+
+/* Terminal Action Toolbar */
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.terminal-tool-btn {
+  background: rgba(128, 128, 128, 0.08);
+  border: 1px solid var(--apple-border);
+  color: var(--apple-text-muted);
+  border-radius: var(--apple-radius-sm);
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-apple);
+  transition: all 0.15s ease;
+}
+
+.terminal-tool-btn:hover {
+  background: rgba(128, 128, 128, 0.18);
+  color: var(--apple-text);
+  border-color: var(--apple-border-light);
 }
 
 /* Table styling */
@@ -724,11 +793,11 @@ select option {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 22px;
+  margin-bottom: 18px;
 }
 
 .page-title {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -753,23 +822,20 @@ body {
   background-attachment: fixed;
 }
 
-/* 玻璃卡:顶部内高光 + 立体投影,hover 轻微上浮 */
-.glass-card {
-  box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+/* 玻璃卡与终端卡统一设计系统:统一阴影、边框、圆角与动效 */
+.glass-card,
+.terminal-window {
+  box-shadow: var(--apple-shadow);
   transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
               box-shadow 0.18s ease,
               background-color 0.25s ease,
               border-color 0.25s ease;
 }
-.glass-card:hover {
+.glass-card:hover,
+.terminal-window:hover {
   background: var(--apple-card-hover);
   border-color: var(--apple-border-light);
-  transform: translateY(-1px);
-  box-shadow:
-    0 16px 40px rgba(0, 0, 0, 0.38),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: var(--apple-shadow-hover);
 }
 
 /* 输入框聚焦:统一强调色辉光(跟随主题 --accent-purple) */
@@ -779,20 +845,62 @@ body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-purple) 20%, transparent);
 }
 
-/* ============ xterm 终端美化 ============ */
+/* ============ xterm 终端深度美化与消除黑边 ============ */
 
-/* 终端挂载点内边距:文字不贴边 */
-.terminal-window .xterm {
-  padding: 8px 10px;
+/* 挂载点容器:无缝衔接 */
+.terminal-mount-box {
+  flex: 1;
+  min-height: 0;
+  background: var(--term-bg);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-/* xterm 滚动条与全局风格一致 */
-.xterm-viewport::-webkit-scrollbar { width: 6px; }
-.xterm-viewport::-webkit-scrollbar-thumb { background: rgba(100,210,255,0.2); border-radius: 3px; }
-.xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(100,210,255,0.35); }
+/* 强制让 xterm 全部 DOM 继承主题背景色,消除 xterm.css 内置的 #000 造成的黑边与割裂 */
+.terminal-window .xterm,
+.terminal-window .xterm-viewport,
+.terminal-window .xterm-screen,
+.terminal-window .xterm-rows {
+  background-color: var(--term-bg) !important;
+}
+
+.terminal-window .xterm {
+  padding: 10px 14px;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.terminal-window .xterm-viewport {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* xterm 滚动条:精致半透明苹果胶囊风格 */
+.terminal-window .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+.terminal-window .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.terminal-window .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.22);
+  border-radius: 3px;
+}
+.terminal-window .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.4);
+}
 
 /* 终端选中区 */
-.xterm .xterm-selection div { background: rgba(100, 210, 255, 0.2) !important; }
+.terminal-window .xterm .xterm-selection div {
+  background: rgba(100, 210, 255, 0.28) !important;
+}
 
 /* ============ Agent 消息气泡美化 ============ */
 

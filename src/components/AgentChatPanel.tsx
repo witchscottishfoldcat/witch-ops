@@ -684,7 +684,7 @@ export const AgentChatPanel: React.FC<{ compact?: boolean; sessionId?: string | 
       {/* 节点信息条 */}
       <div style={{
         background: 'var(--chip-bg)', border: '1px solid var(--chip-border)',
-        padding: compact ? '6px 10px' : '8px 12px', borderRadius: 6, fontSize: compact ? 11 : 12,
+        padding: compact ? '6px 10px' : '8px 12px', borderRadius: 8, fontSize: compact ? 11 : 12,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: compact ? 8 : 12, flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>

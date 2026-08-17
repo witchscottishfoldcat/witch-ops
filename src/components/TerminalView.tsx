@@ -1,23 +1,24 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
-import { Terminal as TermIcon, Plus, X, Bot } from 'lucide-react';
+import {
+  Terminal as TermIcon, Plus, X, Bot, Trash2, ZoomIn, ZoomOut
+} from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import * as ipc from '../lib/ipc';
 import { AgentChatPanel } from './AgentChatPanel';
 import { terminalThemeFor } from '../lib/terminalTheme';
+import { beautifyTerminalOutput, renderLivePromptLine } from '../lib/terminalBeautifier';
 
 /**
- * 交互式终端视图(重写版)
+ * 交互式终端视图 (纯前端 Canvas 渲染引擎)
  *
- * 关键设计(修复旧版问题):
- * - 每个 tab 一个**独立的固定 DOM 容器**,切换 tab 只改 display,不销毁 DOM
- *   (旧版用 innerHTML='' 销毁重建,导致 xterm 状态错乱)
- * - 后端 PTY 打开时用**前端真实计算的 cols/rows**,而不是写死 80x24
- *   (旧版尺寸不一致 → 光标错位、提示符乱码)
- * - xterm.open() 只调用一次
- * - resize 用 ResizeObserver 监听容器,实时同步给后端 PTY
+ * 设计原则:
+ * - 纯前端 Canvas / WebGL 渲染,零向远端注入任何命令/脚本
+ * - 默认内置 Catppuccin Mocha / Tokyo Night 高对比度 ANSI 16 色与等宽排版
+ * - 每个 tab 独立 DOM 容器与全局 xterm 实例,切换 tab 仅切换 display
+ * - 保持远端 SSH PTY 通道 100% 纯净与稳定
  */
 
 interface TermInstance {
@@ -31,11 +32,10 @@ interface TermInstance {
 const termInstances = new Map<string, TermInstance>();
 const containerCache = new Map<string, HTMLDivElement>();
 
-/** 根据容器像素尺寸估算 cols/rows(与 xterm 内部一致) */
-function estimateSize(el: HTMLElement): { cols: number; rows: number } {
-  // 13px 字号等宽字体:单个字符宽约 7.2px,行高约 17px(经验值)
-  const charWidth = 7.2;
-  const charHeight = 17;
+/** 根据容器像素尺寸估算 cols/rows */
+function estimateSize(el: HTMLElement, fontSize = 13.5): { cols: number; rows: number } {
+  const charWidth = fontSize * 0.58;
+  const charHeight = fontSize * 1.35;
   const cols = Math.max(20, Math.floor(el.clientWidth / charWidth));
   const rows = Math.max(5, Math.floor(el.clientHeight / charHeight));
   return { cols, rows };
@@ -47,11 +47,20 @@ export const TerminalView: React.FC = () => {
     activeServerId, connectedServerIds, theme
   } = useApp();
 
-  // 用 state 强制触发重渲染(当容器需要挂载时)
+  // 终端配色跟随当前主题 (或自动适配最高品质的开源标准调色板)
+  const effectiveTheme = theme || 'macos-dark';
+
+  // 字号大小调节(持久化存储)
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const saved = localStorage.getItem('terminal_font_size');
+    return saved ? Math.max(11, Math.min(22, Number(saved))) : 13.5;
+  });
+
+  // 用 state 强制触发重渲染
   const [, forceUpdate] = useState(0);
   const mountPointRef = useRef<HTMLDivElement>(null);
 
-  // 右侧 AI 面板:可折叠,记忆用户选择
+  // 右侧 AI 面板
   const [showAi, setShowAi] = useState(() => localStorage.getItem('terminal_ai_panel') !== 'off');
   const toggleAi = () => {
     setShowAi(prev => {
@@ -62,42 +71,65 @@ export const TerminalView: React.FC = () => {
 
   const activeTab = terminalTabs.find(t => t.id === activeTerminalId);
 
-  // 为新 tab 创建 xterm 实例(只创建一次)
-  const ensureInstance = (tabId: string): TermInstance => {
+  // 获取或创建 xterm 实例 (纯净 PTY,零指令注入)
+  const getOrCreateInstance = useCallback((tabId: string): TermInstance => {
     let inst = termInstances.get(tabId);
     if (inst) return inst;
-    ipc.frontendLog(`ensureInstance 新建 xterm tab=${tabId.slice(0, 16)}`);
+    ipc.frontendLog(`getOrCreateInstance 新建 xterm tab=${tabId.slice(0, 16)}`);
+
+    const currentThemePalette = terminalThemeFor(effectiveTheme);
 
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
-      lineHeight: 1.2,
-      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      cursorInactiveStyle: 'outline',
+      fontSize,
+      lineHeight: 1.35,
+      letterSpacing: 0.2,
+      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
+      fontWeight: '400',
+      fontWeightBold: '600',
       allowProposedApi: true,
-      theme: terminalThemeFor(theme),
-      scrollback: 2000,
+      theme: currentThemePalette,
+      scrollback: 5000,
       scrollOnUserInput: true,
-      convertEol: false, // PTY 自己处理换行,不要前端转
+      smoothScrollDuration: 120,
+      convertEol: false,
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    // 输出:接管 openTerminal 时已注册的缓冲监听,回放初始输出 + 接管后续
-    // (openTerminal 里 beginTerminalBuffer 先注册了监听并缓冲,这里 xterm 就绪后接管)
-    ipc.attachTerminalBuffer(tabId, (bytes) => term.write(bytes));
+    // 输出:接管 openTerminal 缓冲监听并纯前端美化渲染与打字实时校验
+    ipc.attachTerminalBuffer(tabId, (bytes) => {
+      const enhanced = beautifyTerminalOutput(bytes);
+      term.write(enhanced, () => {
+        // 当收到打字回显或退格时,实时重绘当前光标行(保证多屏滚动历史下 100% 永久稳定触发)
+        if (bytes.length <= 64) {
+          try {
+            const buffer = term.buffer.active;
+            const lineIndex = buffer.baseY + buffer.cursorY;
+            const line = buffer.getLine(lineIndex)?.translateToString(true) || '';
+            const redrawn = renderLivePromptLine(line);
+            if (redrawn) {
+              term.write(redrawn);
+            }
+          } catch {}
+        }
+      });
+    });
 
-    // 退出事件:即时处理(断开/结束提示)
+    // 退出事件处理
     ipc.onTerminalExit(tabId, (code) => {
       if (code === -1) {
-        // code=-1 表示连接断开(非程序正常退出)
-        term.write(`\r\n\x1b[31m━━━ SSH 连接已断开 ━━━\x1b[0m\r\n`);
-        term.write(`\x1b[90m请回到"服务器管理"重新连接,或关闭此终端页签后重开。\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[38;2;255;107;129m━━━ SSH 连接已断开 ━━━\x1b[0m\r\n`);
+        term.write(`\x1b[38;2;140;149;159m请回到"服务器管理"重新连接,或关闭此终端页签后重开。\x1b[0m\r\n`);
       } else {
-        term.write(`\r\n\x1b[33m[会话已结束,退出码: ${code}]\x1b[0m\r\n`);
+        term.write(`\r\n\x1b[38;2;227;179;65m[会话已结束,退出码: ${code}]\x1b[0m\r\n`);
       }
     }).then(un => { inst!.unlistenExit = un; }).catch(() => {});
 
-    // 用户输入 → 后端(base64)
+    // 用户原生键盘输入 → 后端 PTY (绝对不附带任何额外注入)
     term.onData((data) => {
       const b64 = btoa(unescape(encodeURIComponent(data)));
       ipc.terminalInput(tabId, b64).catch(e => console.error('发送输入失败', e));
@@ -111,13 +143,13 @@ export const TerminalView: React.FC = () => {
     inst = { term, fitAddon };
     termInstances.set(tabId, inst);
     return inst;
-  };
+  }, [fontSize, effectiveTheme]);
 
-  // 挂载/切换终端到容器
+  // 挂载/切换终端到容器 (仅在 activeTab.id 变化时触发)
   useEffect(() => {
-    ipc.frontendLog(`TerminalView effect 触发 tab=${activeTab?.id?.slice(0, 16) ?? 'null'} mount=${!!mountPointRef.current}`);
     if (!activeTab || !mountPointRef.current) return;
     const mountPoint = mountPointRef.current;
+    const currentThemePalette = terminalThemeFor(effectiveTheme);
 
     try {
       // 隐藏所有容器
@@ -127,8 +159,10 @@ export const TerminalView: React.FC = () => {
       let container = containerCache.get(activeTab.id);
       if (!container) {
         container = document.createElement('div');
-        container.style.cssText = 'width:100%;height:100%;';
+        container.style.cssText = `width:100%;height:100%;background:${currentThemePalette.background || 'var(--term-bg)'};`;
         containerCache.set(activeTab.id, container);
+      } else {
+        container.style.background = currentThemePalette.background || 'var(--term-bg)';
       }
 
       // 挂到挂载点并显示
@@ -137,12 +171,11 @@ export const TerminalView: React.FC = () => {
       }
       container.style.display = 'block';
 
-      const inst = ensureInstance(activeTab.id);
+      const inst = getOrCreateInstance(activeTab.id);
 
       // xterm 只 open 一次
       if (!inst.term.element) {
         inst.term.open(container);
-        ipc.frontendLog(`xterm.open 完成 tab=${activeTab.id.slice(0, 16)} 容器=${container.clientWidth}x${container.clientHeight}`);
       } else if (inst.term.element.parentElement !== container) {
         container.appendChild(inst.term.element);
       }
@@ -162,7 +195,7 @@ export const TerminalView: React.FC = () => {
     }
   }, [activeTab?.id]);
 
-  // 容器尺寸变化(窗口拖动/侧边栏折叠)→ 重新 fit(rAF 节流,避免拖窗口时每帧多次 IPC)
+  // 容器尺寸变化监听
   useEffect(() => {
     if (!mountPointRef.current || !activeTab) return;
     const inst = termInstances.get(activeTab.id);
@@ -187,19 +220,48 @@ export const TerminalView: React.FC = () => {
     };
   }, [activeTab?.id]);
 
-  // 主题切换 → 热更新所有存活实例(xterm 实例全局缓存,不重建不丢输出)
+  // 主题切换 → 热更新所有存活实例与容器背景
   useEffect(() => {
-    const t = terminalThemeFor(theme);
+    const t = terminalThemeFor(effectiveTheme);
     termInstances.forEach((inst) => {
       inst.term.options.theme = t;
       inst.term.refresh(0, inst.term.rows - 1);
     });
-  }, [theme]);
+    containerCache.forEach((el) => {
+      el.style.background = t.background || 'var(--term-bg)';
+    });
+    if (mountPointRef.current) {
+      mountPointRef.current.style.background = t.background || 'var(--term-bg)';
+    }
+  }, [effectiveTheme]);
 
-  // 注意:不要在组件卸载时 dispose 实例!
-  // StrictMode 开发模式会"挂载→卸载→重挂载",若卸载即 dispose,
-  // 已回放的 shell 输出会随被销毁的实例丢失 → 黑屏。
-  // 实例生命周期由 handleClose(关页签)管理,视图切换时保留。
+  // 字号切换
+  const handleFontSizeChange = (delta: number) => {
+    const nextSize = Math.max(11, Math.min(22, fontSize + delta));
+    setFontSize(nextSize);
+    localStorage.setItem('terminal_font_size', String(nextSize));
+
+    termInstances.forEach((inst, tabId) => {
+      inst.term.options.fontSize = nextSize;
+      requestAnimationFrame(() => {
+        try {
+          inst.fitAddon.fit();
+          const { cols, rows } = inst.term;
+          ipc.terminalResize(tabId, cols, rows).catch(() => {});
+        } catch {}
+      });
+    });
+  };
+
+  // 清屏操作
+  const handleClear = () => {
+    if (!activeTab) return;
+    const inst = termInstances.get(activeTab.id);
+    if (inst) {
+      inst.term.clear();
+      inst.term.focus();
+    }
+  };
 
   const handleClose = async (tabId: string) => {
     const inst = termInstances.get(tabId);
@@ -213,14 +275,13 @@ export const TerminalView: React.FC = () => {
     await closeTerminal(tabId);
   };
 
-  // 打开新终端:用挂载点的真实尺寸打开 PTY,避免打开瞬间尺寸不一致
+  // 打开新终端
   const handleOpenTerminal = async () => {
     if (!activeServerId) return;
-    // 用挂载点(或窗口)估算真实 cols/rows
     const el = mountPointRef.current;
     let cols = 80, rows = 24;
     if (el) {
-      const size = estimateSize(el);
+      const size = estimateSize(el, fontSize);
       cols = size.cols;
       rows = size.rows;
     }
@@ -229,7 +290,8 @@ export const TerminalView: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {/* 顶部标题栏 */}
       <div className="page-title-row">
         <div className="page-title">
           <TermIcon size={20} style={{ color: 'var(--accent-cyan)' }} />
@@ -240,16 +302,17 @@ export const TerminalView: React.FC = () => {
                 style={{
                   width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
                   background: connectedServerIds.has(activeTab.serverId) ? 'var(--apple-green)' : 'var(--apple-red)',
+                  boxShadow: connectedServerIds.has(activeTab.serverId) ? '0 0 6px rgba(52, 199, 89, 0.4)' : 'none',
                 }}
               />
               {connectedServerIds.has(activeTab.serverId) ? '已连接' : '未连接'}
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
             className={showAi ? 'btn btn-primary' : 'btn btn-secondary'}
-            style={{ fontSize: 12, height: 30 }}
+            style={{ fontSize: 12, height: 32 }}
             onClick={toggleAi}
             title={showAi ? '收起右侧 AI 面板' : '展开右侧 AI 面板'}
           >
@@ -257,7 +320,7 @@ export const TerminalView: React.FC = () => {
           </button>
           <button
             className="btn btn-secondary"
-            style={{ fontSize: 12, height: 30 }}
+            style={{ fontSize: 12, height: 32 }}
             onClick={handleOpenTerminal}
           >
             <Plus size={14} /> 打开新终端
@@ -267,47 +330,105 @@ export const TerminalView: React.FC = () => {
 
       {/* 终端 + 右侧 AI 面板 */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 12 }}>
-        <div className="terminal-window" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
-        <div className="terminal-header">
-          <div className="terminal-tabs">
-            {terminalTabs.map(t => (
-              <div
-                key={t.id}
-                className={`terminal-tab ${activeTerminalId === t.id ? 'active' : ''}`}
-                onClick={() => setActiveTerminalId(t.id)}
-              >
-                <span>{t.title}</span>
-                <X size={12} style={{ opacity: 0.6 }} onClick={(e) => { e.stopPropagation(); handleClose(t.id); }} />
+        {/* 左侧终端卡片 */}
+        <div className="glass-card terminal-window" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, padding: 0, overflow: 'hidden' }}>
+          <div className="terminal-header">
+            {/* 标签页列表 */}
+            <div className="terminal-tabs">
+              {terminalTabs.map(t => (
+                <div
+                  key={t.id}
+                  className={`terminal-tab ${activeTerminalId === t.id ? 'active' : ''}`}
+                  onClick={() => setActiveTerminalId(t.id)}
+                  title={t.title}
+                >
+                  <TermIcon size={13} style={{ opacity: activeTerminalId === t.id ? 1 : 0.6, flexShrink: 0 }} />
+                  <span style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.title}
+                  </span>
+                  <span
+                    className="tab-close-icon"
+                    onClick={(e) => { e.stopPropagation(); handleClose(t.id); }}
+                    title="关闭此标签"
+                  >
+                    <X size={11} />
+                  </span>
+                </div>
+              ))}
+
+              {terminalTabs.length > 0 && (
+                <button
+                  className="terminal-tool-btn"
+                  onClick={handleOpenTerminal}
+                  title="新建终端页签"
+                  style={{ padding: '4px 6px' }}
+                >
+                  <Plus size={13} />
+                </button>
+              )}
+
+              {terminalTabs.length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', padding: '4px 8px' }}>无活动终端</div>
+              )}
+            </div>
+
+            {/* 终端右侧精炼工具栏 */}
+            {activeTab && (
+              <div className="terminal-toolbar">
+                {/* 字号缩放 */}
+                <button
+                  className="terminal-tool-btn"
+                  onClick={() => handleFontSizeChange(-1)}
+                  title="缩小字体 (A-)"
+                  disabled={fontSize <= 11}
+                >
+                  <ZoomOut size={12} />
+                </button>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)', minWidth: 26, textAlign: 'center', userSelect: 'none' }}>
+                  {fontSize}px
+                </span>
+                <button
+                  className="terminal-tool-btn"
+                  onClick={() => handleFontSizeChange(1)}
+                  title="放大字体 (A+)"
+                  disabled={fontSize >= 22}
+                >
+                  <ZoomIn size={12} />
+                </button>
+
+                <div style={{ width: 1, height: 14, background: 'var(--apple-border)', margin: '0 2px' }} />
+
+                <button
+                  className="terminal-tool-btn"
+                  onClick={handleClear}
+                  title="清屏 (Clear)"
+                >
+                  <Trash2 size={12} /> 清屏
+                </button>
               </div>
-            ))}
-            {terminalTabs.length === 0 && (
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', padding: '4px 8px' }}>无活动终端</div>
+            )}
+          </div>
+
+          {/* xterm 挂载点 */}
+          <div
+            ref={mountPointRef}
+            className="terminal-mount-box"
+          >
+            {!activeTab && (
+              <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--text-muted)' }}>
+                <TermIcon size={48} style={{ opacity: 0.25 }} />
+                <div style={{ fontSize: 13 }}>选择或新建终端页签以开启 PTY 会话</div>
+                {activeServerId && (
+                  <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={handleOpenTerminal}>
+                    <Plus size={13} /> 为当前服务器打开终端
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
 
-        {/* xterm 挂载点:固定容器,内部 tab 容器用 display 切换 */}
-        <div
-          ref={mountPointRef}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            background: 'var(--term-bg)',
-            overflow: 'hidden',
-            position: 'relative',
-            borderBottomLeftRadius: 'var(--apple-radius-md)',
-            borderBottomRightRadius: 'var(--apple-radius-md)',
-          }}
-        >
-          {!activeTab && (
-            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
-              选择或新建终端页签
-            </div>
-          )}
-        </div>
-        </div>
-
-        {/* 右侧 AI 对话面板(紧凑模式,独立会话) */}
+        {/* 右侧 AI 对话面板 */}
         {showAi && (
           <div className="glass-card" style={{ width: 360, flexShrink: 0, padding: 12, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <AgentChatPanel compact />
