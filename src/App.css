@@ -46,6 +46,26 @@
   --text-muted: var(--apple-text-muted);
   --text-dim: var(--apple-text-dim);
   --border-color: var(--apple-border);
+
+  /* 终端(xterm)专用 */
+  --term-bg: #0b0d12;
+  --term-header-bg: rgba(24, 26, 32, 0.92);
+  /* 语义化表面色:代码块 / 内嵌面板 / 标签 / 信息横幅 / 消息气泡(组件引用,随主题自动跟随) */
+  --code-bg: #0d0f15;
+  --code-fg: #e6e8ec;
+  --code-border: rgba(255, 255, 255, 0.1);
+  --panel-inset-bg: rgba(0, 0, 0, 0.3);
+  --chip-bg: rgba(139, 92, 246, 0.15);
+  --chip-border: rgba(139, 92, 246, 0.3);
+  --info-bg: rgba(6, 182, 212, 0.12);
+  --info-border: rgba(6, 182, 212, 0.28);
+  --bubble-user-bg: rgba(6, 182, 212, 0.18);
+  --bubble-user-border: rgba(6, 182, 212, 0.3);
+  --bubble-agent-bg: rgba(255, 255, 255, 0.05);
+  --bubble-agent-border: var(--apple-border);
+  /* 背景环境光晕(两团径向渐变) */
+  --glow-1: rgba(100, 210, 255, 0.045);
+  --glow-2: rgba(191, 90, 242, 0.04);
 }
 
 /* Theme 2: macOS Light */
@@ -74,6 +94,23 @@
   --apple-text-dim: #86868b;
 
   --apple-shadow: 0 8px 24px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255,255,255,1);
+
+  --term-bg: #f5f5f7;
+  --term-header-bg: rgba(255, 255, 255, 0.85);
+  --code-bg: #f0f0f4;
+  --code-fg: #1d1d1f;
+  --code-border: rgba(0, 0, 0, 0.08);
+  --panel-inset-bg: rgba(0, 0, 0, 0.04);
+  --chip-bg: rgba(175, 82, 222, 0.12);
+  --chip-border: rgba(175, 82, 222, 0.3);
+  --info-bg: rgba(0, 122, 255, 0.08);
+  --info-border: rgba(0, 122, 255, 0.25);
+  --bubble-user-bg: rgba(0, 122, 255, 0.1);
+  --bubble-user-border: rgba(0, 122, 255, 0.28);
+  --bubble-agent-bg: rgba(0, 0, 0, 0.04);
+  --bubble-agent-border: var(--apple-border);
+  --glow-1: rgba(0, 122, 255, 0.05);
+  --glow-2: rgba(175, 82, 222, 0.04);
 }
 
 /* Theme 3: Bilibili Pink */
@@ -102,6 +139,23 @@
   --apple-text-dim: #9499a0;
 
   --apple-shadow: 0 6px 24px rgba(255, 102, 153, 0.12), inset 0 1px 0 rgba(255,255,255,1);
+
+  --term-bg: #fdf2f7;
+  --term-header-bg: rgba(255, 242, 247, 0.9);
+  --code-bg: #fbeef4;
+  --code-fg: #3a3a3c;
+  --code-border: rgba(251, 114, 153, 0.18);
+  --panel-inset-bg: rgba(0, 0, 0, 0.04);
+  --chip-bg: rgba(251, 114, 153, 0.14);
+  --chip-border: rgba(251, 114, 153, 0.3);
+  --info-bg: rgba(0, 161, 214, 0.1);
+  --info-border: rgba(0, 161, 214, 0.28);
+  --bubble-user-bg: rgba(0, 161, 214, 0.12);
+  --bubble-user-border: rgba(0, 161, 214, 0.3);
+  --bubble-agent-bg: rgba(0, 0, 0, 0.04);
+  --bubble-agent-border: var(--apple-border);
+  --glow-1: rgba(251, 114, 153, 0.07);
+  --glow-2: rgba(0, 161, 214, 0.05);
 }
 
 /* Theme 4: Cyber Neon */
@@ -130,6 +184,23 @@
   --apple-text-dim: #6b7280;
 
   --apple-shadow: 0 8px 30px rgba(139, 92, 246, 0.25), inset 0 1px 0 rgba(255,255,255,0.05);
+
+  --term-bg: #0f141e;
+  --term-header-bg: rgba(13, 18, 28, 0.92);
+  --code-bg: #0b0f19;
+  --code-fg: #dbe4f0;
+  --code-border: rgba(139, 92, 246, 0.25);
+  --panel-inset-bg: rgba(0, 0, 0, 0.35);
+  --chip-bg: rgba(139, 92, 246, 0.18);
+  --chip-border: rgba(139, 92, 246, 0.35);
+  --info-bg: rgba(6, 182, 212, 0.12);
+  --info-border: rgba(6, 182, 212, 0.3);
+  --bubble-user-bg: rgba(6, 182, 212, 0.18);
+  --bubble-user-border: rgba(6, 182, 212, 0.32);
+  --bubble-agent-bg: rgba(255, 255, 255, 0.05);
+  --bubble-agent-border: var(--apple-border);
+  --glow-1: rgba(139, 92, 246, 0.09);
+  --glow-2: rgba(6, 182, 212, 0.06);
 }
 
 /* Theme 5: Monokai Pro */
@@ -158,6 +229,23 @@
   --apple-text-dim: #727072;
 
   --apple-shadow: 0 8px 25px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+
+  --term-bg: #2d2a2e;
+  --term-header-bg: rgba(39, 36, 40, 0.92);
+  --code-bg: #211e22;
+  --code-fg: #fcfcfa;
+  --code-border: rgba(255, 216, 102, 0.18);
+  --panel-inset-bg: rgba(0, 0, 0, 0.3);
+  --chip-bg: rgba(171, 157, 242, 0.16);
+  --chip-border: rgba(171, 157, 242, 0.32);
+  --info-bg: rgba(120, 220, 232, 0.12);
+  --info-border: rgba(120, 220, 232, 0.3);
+  --bubble-user-bg: rgba(120, 220, 232, 0.16);
+  --bubble-user-border: rgba(120, 220, 232, 0.32);
+  --bubble-agent-bg: rgba(255, 255, 255, 0.05);
+  --bubble-agent-border: var(--apple-border);
+  --glow-1: rgba(255, 216, 102, 0.05);
+  --glow-2: rgba(171, 157, 242, 0.05);
 }
 
 * {
@@ -180,22 +268,22 @@ body {
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
-/* Custom Scrollbars */
+/* Custom Scrollbars(纤细贴边) */
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.3);
-  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.28);
+  border-radius: 4px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(128, 128, 128, 0.5);
+  background: rgba(128, 128, 128, 0.45);
   background-clip: padding-box;
 }
 
@@ -230,7 +318,11 @@ body {
   height: 48px;
   background: var(--apple-sidebar-bg);
   backdrop-filter: var(--apple-blur);
-  border-bottom: 1px solid var(--apple-border);
+  border-bottom: 1px solid transparent;
+  background-image: linear-gradient(var(--apple-sidebar-bg), var(--apple-sidebar-bg)),
+    linear-gradient(90deg, transparent, rgba(255,255,255,0.09), transparent);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -371,6 +463,8 @@ select option {
   color: var(--apple-text);
 }
 
+.sidebar-nav-item:active { transform: scale(0.98); }
+
 .sidebar-nav-item.active {
   background: var(--apple-blue);
   color: #ffffff;
@@ -397,20 +491,13 @@ select option {
   color: #fff;
 }
 
-/* Apple Card Aesthetics */
+/* Apple Card Aesthetics(投影/动效见"主题协调与动效层") */
 .glass-card {
   background: var(--apple-card-bg);
   backdrop-filter: var(--apple-blur);
   border: 1px solid var(--apple-border);
   border-radius: var(--apple-radius-md);
   padding: 20px;
-  box-shadow: var(--apple-shadow);
-  transition: transform 0.15s ease, background-color 0.25s ease, border-color 0.25s ease;
-}
-
-.glass-card:hover {
-  background: var(--apple-card-hover);
-  border-color: var(--apple-border-light);
 }
 
 /* Apple Buttons */
@@ -428,6 +515,8 @@ select option {
   outline: none;
   font-family: var(--font-apple);
 }
+.btn:active { transform: scale(0.96); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .btn-primary {
   background: var(--apple-blue);
@@ -467,7 +556,7 @@ select option {
   background: rgba(48, 209, 88, 0.3);
 }
 
-/* macOS Inset Input Field */
+/* macOS Inset Input Field(聚焦态见"主题协调与动效层") */
 .input-field {
   background: rgba(0, 0, 0, 0.15);
   border: 1px solid var(--apple-border);
@@ -479,11 +568,6 @@ select option {
   width: 100%;
   transition: all 0.15s ease;
   font-family: var(--font-apple);
-}
-.input-field:focus {
-  border-color: var(--apple-blue);
-  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
-  background: rgba(0, 0, 0, 0.25);
 }
 
 /* macOS Badges */
@@ -527,11 +611,12 @@ select option {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(8px) saturate(160%);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
+  animation: fadeIn 0.15s ease;
 }
 
 .modal-content {
@@ -541,18 +626,22 @@ select option {
   width: 480px;
   max-width: 90vw;
   padding: 24px;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.4);
-  animation: macModalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+  animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes macModalIn {
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes popIn {
   from { opacity: 0; transform: scale(0.96) translateY(6px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* Terminal View macOS iTerm Style */
+/* Terminal View macOS iTerm Style(底色跟随主题 --term-*) */
 .terminal-window {
-  background: #141417;
+  background: var(--term-bg);
   border: 1px solid var(--apple-border);
   border-radius: var(--apple-radius-md);
   display: flex;
@@ -564,7 +653,7 @@ select option {
 
 .terminal-header {
   height: 38px;
-  background: rgba(30, 30, 36, 0.9);
+  background: var(--term-header-bg);
   border-bottom: 1px solid var(--apple-border);
   display: flex;
   align-items: center;
@@ -588,45 +677,19 @@ select option {
   align-items: center;
   gap: 6px;
   font-family: var(--font-apple);
+  transition: background 0.15s, color 0.15s;
+}
+
+.terminal-tab:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--apple-text);
 }
 
 .terminal-tab.active {
-  background: rgba(10, 132, 255, 0.2);
+  background: rgba(139, 92, 246, 0.15);
   color: #fff;
-  border-bottom: 2px solid var(--apple-blue);
+  border-bottom: 2px solid var(--accent-purple);
   font-weight: 500;
-}
-
-.terminal-body {
-  flex: 1;
-  padding: 16px;
-  overflow-y: auto;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.terminal-line {
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.terminal-input-bar {
-  display: flex;
-  align-items: center;
-  padding: 8px 14px;
-  background: rgba(20, 20, 24, 0.95);
-  border-top: 1px solid var(--apple-border);
-}
-
-.terminal-input-bar input {
-  background: transparent;
-  border: none;
-  color: var(--apple-cyan);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  outline: none;
-  flex: 1;
-  margin-left: 8px;
 }
 
 /* Table styling */
@@ -651,8 +714,9 @@ select option {
   font-size: 13px;
 }
 
-.data-table tr:hover td {
-  background: rgba(128, 128, 128, 0.05);
+.data-table tbody tr { transition: background-color 0.12s ease; }
+.data-table tbody tr:hover td {
+  background: rgba(128, 128, 128, 0.06);
 }
 
 /* Page Title Row */
@@ -678,19 +742,18 @@ select option {
   margin-top: 3px;
 }
 
-/* ==================== 质感精修层 ==================== */
-/* 同优先级下本层规则覆盖上文同名规则 */
+/* ==================== 主题协调与动效层 ==================== */
 
-/* 背景:顶部极轻微的环境光晕(Apple 式氛围) */
+/* 背景:顶部环境光晕(颜色随主题 --glow-* 变化) */
 body {
   background-image:
-    radial-gradient(1200px 500px at 70% -10%, rgba(100, 210, 255, 0.045), transparent 60%),
-    radial-gradient(900px 420px at 15% -8%, rgba(191, 90, 242, 0.04), transparent 55%);
+    radial-gradient(1200px 500px at 70% -10%, var(--glow-1), transparent 60%),
+    radial-gradient(900px 420px at 15% -8%, var(--glow-2), transparent 55%);
   background-repeat: no-repeat;
   background-attachment: fixed;
 }
 
-/* 玻璃卡:顶部内高光 + 更立体的投影,hover 轻微上浮 */
+/* 玻璃卡:顶部内高光 + 立体投影,hover 轻微上浮 */
 .glass-card {
   box-shadow:
     0 12px 32px rgba(0, 0, 0, 0.32),
@@ -707,61 +770,12 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-/* 按钮:按压回弹反馈 */
-.btn { transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1); }
-.btn:active { transform: scale(0.96); }
-.btn:disabled { opacity: 0.55; cursor: not-allowed; }
-
-/* 输入框:focus 蓝色辉光环 */
-.input-field {
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.25s ease;
-}
+/* 输入框聚焦:统一强调色辉光(跟随主题 --accent-purple) */
 .input-field:focus {
-  border-color: var(--apple-blue);
-  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.22);
   outline: none;
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-purple) 20%, transparent);
 }
-
-/* 标题栏:更细腻的底部渐变相邻线 */
-.header-bar {
-  border-bottom: 1px solid transparent;
-  background-image: linear-gradient(var(--apple-sidebar-bg), var(--apple-sidebar-bg)),
-    linear-gradient(90deg, transparent, rgba(255,255,255,0.09), transparent);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
-}
-
-/* 侧栏导航:按压反馈 */
-.sidebar-nav-item { transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1); }
-.sidebar-nav-item:active { transform: scale(0.98); }
-
-/* 弹窗:遮罩模糊 + 内容弹入 */
-.modal-overlay {
-  backdrop-filter: blur(8px) saturate(160%);
-  animation: fadeIn 0.15s ease;
-}
-.modal-content {
-  animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.06);
-}
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes popIn {
-  from { opacity: 0; transform: scale(0.96) translateY(6px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-/* 页面标题:字距收紧,更利落 */
-.page-title { letter-spacing: -0.02em; }
-
-/* 表格行:hover 高亮 */
-.data-table tbody tr { transition: background-color 0.12s ease; }
-.data-table tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
-
-/* 滚动条:纤细贴边 */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.28); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
-::-webkit-scrollbar-track { background: transparent; }
 
 /* ============ xterm 终端美化 ============ */
 
@@ -788,15 +802,3 @@ body {
 
 /* 代码块 hover 效果 */
 .agent-message-content pre:hover { border-color: rgba(100, 210, 255, 0.3); }
-
-/* ============ 输入框聚焦态 ============ */
-.input-field:focus {
-  outline: none;
-  border-color: rgba(139, 92, 246, 0.4);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.1);
-}
-
-/* ============ 终端标签栏微调 ============ */
-.terminal-tab { transition: background 0.15s, color 0.15s; }
-.terminal-tab:hover:not(.active) { background: rgba(255,255,255,0.08); color: var(--apple-text-main); }
-.terminal-tab.active { border-bottom: 2px solid var(--accent-purple); background: rgba(139, 92, 246, 0.15); }

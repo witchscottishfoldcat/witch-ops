@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import * as ipc from '../lib/ipc';
 import { AgentChatPanel } from './AgentChatPanel';
+import { terminalThemeFor } from '../lib/terminalTheme';
 
 /**
  * 交互式终端视图(重写版)
@@ -43,7 +44,7 @@ function estimateSize(el: HTMLElement): { cols: number; rows: number } {
 export const TerminalView: React.FC = () => {
   const {
     terminalTabs, activeTerminalId, setActiveTerminalId, closeTerminal, openTerminal,
-    activeServerId, connectedServerIds
+    activeServerId, connectedServerIds, theme
   } = useApp();
 
   // 用 state 强制触发重渲染(当容器需要挂载时)
@@ -73,29 +74,7 @@ export const TerminalView: React.FC = () => {
       lineHeight: 1.2,
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
       allowProposedApi: true,
-      theme: {
-        background: '#0b0d12',
-        foreground: '#e6e8ec',
-        cursor: '#64d2ff',
-        cursorAccent: '#0b0d12',
-        selectionBackground: 'rgba(100, 210, 255, 0.25)',
-        black: '#0b0d12',
-        brightBlack: '#4b5563',
-        red: '#ff6b6b',
-        brightRed: '#ff8787',
-        green: '#51cf66',
-        brightGreen: '#8ce99a',
-        yellow: '#ffd43b',
-        brightYellow: '#ffe066',
-        blue: '#74c0fc',
-        brightBlue: '#a5d8ff',
-        magenta: '#da77f2',
-        brightMagenta: '#e599f7',
-        cyan: '#66d9e8',
-        brightCyan: '#99e9f2',
-        white: '#e6e8ec',
-        brightWhite: '#ffffff',
-      },
+      theme: terminalThemeFor(theme),
       scrollback: 2000,
       scrollOnUserInput: true,
       convertEol: false, // PTY 自己处理换行,不要前端转
@@ -208,6 +187,15 @@ export const TerminalView: React.FC = () => {
     };
   }, [activeTab?.id]);
 
+  // 主题切换 → 热更新所有存活实例(xterm 实例全局缓存,不重建不丢输出)
+  useEffect(() => {
+    const t = terminalThemeFor(theme);
+    termInstances.forEach((inst) => {
+      inst.term.options.theme = t;
+      inst.term.refresh(0, inst.term.rows - 1);
+    });
+  }, [theme]);
+
   // 注意:不要在组件卸载时 dispose 实例!
   // StrictMode 开发模式会"挂载→卸载→重挂载",若卸载即 dispose,
   // 已回放的 shell 输出会随被销毁的实例丢失 → 黑屏。
@@ -241,13 +229,13 @@ export const TerminalView: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 92px)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="page-title-row">
+        <div className="page-title">
           <TermIcon size={20} style={{ color: 'var(--accent-cyan)' }} />
-          <h2 style={{ fontSize: 18, fontWeight: 700 }}>PTY 交互式终端</h2>
+          PTY 交互式终端
           {activeTab && (
-            <span style={{ fontSize: 12, color: 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 4 }}>
               <span
                 style={{
                   width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
@@ -304,7 +292,7 @@ export const TerminalView: React.FC = () => {
           style={{
             flex: 1,
             minHeight: 0,
-            background: '#0b0d12',
+            background: 'var(--term-bg)',
             overflow: 'hidden',
             position: 'relative',
             borderBottomLeftRadius: 'var(--apple-radius-md)',
