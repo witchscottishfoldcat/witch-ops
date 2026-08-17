@@ -2,7 +2,7 @@
 // 所有后端命令在这里统一封装,组件不直接调 invoke。
 // 契约来源:docs/BACKEND_API.md
 
-import { invoke, Channel } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke, Channel } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import type {
   Server, ServerInput, AuditLog, AuditFilter, Skill, QuickAction, Doc,
@@ -10,6 +10,54 @@ import type {
   DirEntry, AuditContext, ExecuteResult, AgentExecutionResult,
   ChatRequest, ChatEvent,
 } from '../types/backend';
+
+// ============ 纯 Web 预览降级 ============
+//
+// 无 Tauri 运行时注入(浏览器直接打开 vite dev server)时,
+// tauriInvoke 会同步抛 "Cannot read properties of undefined (reading 'invoke')"。
+// 这里做一层守卫:
+// - 启动即触发的只读命令返回类型安全的空默认值,让预览 UI 干净渲染(不弹错误);
+// - 其余命令拒绝并给出明确提示(点击功能时 toast"后端未运行")。
+// 真实 Tauri 应用中 __TAURI_INTERNALS__ 始终存在,此守卫完全不影响正常行为。
+
+/** 是否运行在 Tauri 运行时内 */
+const isTauriRuntime = (): boolean =>
+  typeof window !== 'undefined' && !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+
+/** 预览模式下的只读命令默认值(类型与后端契约一致) */
+const PREVIEW_DEFAULTS: Record<string, unknown> = {
+  vault_is_initialized: false,
+  vault_is_unlocked: false,
+  list_servers: [] as Server[],
+  list_skills: [] as Skill[],
+  list_enabled_skills: [] as Skill[],
+  list_quick_actions: [] as QuickAction[],
+  list_docs: [] as Doc[],
+  list_providers: [] as ProviderSummary[],
+  list_agent_sessions: [] as unknown[],
+  query_audit_logs: [] as AuditLog[],
+  audit_stats: { total: 0, success: 0, failed: 0 },
+  list_containers: [] as Container[],
+  list_services: [] as Service[],
+  sftp_list_dir: [] as DirEntry[],
+  server_connection_status: false,
+  get_metrics: {
+    cpu_usage: 0, mem_total: 0, mem_used: 0, mem_available: 0,
+    swap_total: 0, swap_used: 0, load_1: 0, load_5: 0, load_15: 0,
+    uptime_seconds: 0, disks: [],
+  } as ServerMetrics,
+};
+
+/** invoke 的守卫封装:预览模式下不触达 tauriInvoke(避免同步抛错) */
+function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauriRuntime()) {
+    if (cmd in PREVIEW_DEFAULTS) {
+      return Promise.resolve(PREVIEW_DEFAULTS[cmd] as T);
+    }
+    return Promise.reject(new Error(`后端未运行(纯 Web 预览):IPC '${cmd}' 不可用`));
+  }
+  return tauriInvoke<T>(cmd, args);
+}
 
 // ============ 凭证库 ============
 export const vaultIsInitialized = () => invoke<boolean>('vault_is_initialized');
@@ -90,6 +138,9 @@ export const agentChat = (
   request: ChatRequest,
   onEvent: (event: ChatEvent) => void
 ): Promise<void> => {
+  if (!isTauriRuntime()) {
+    return Promise.reject(new Error('后端未运行(纯 Web 预览):Agent 对话不可用'));
+  }
   const out = new Channel<ChatEvent>();
   out.onmessage = (event) => onEvent(event);
   return invoke('agent_chat', { request, out });
