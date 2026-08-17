@@ -5,7 +5,15 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getVersion } from '@tauri-apps/api/app';
 import { CustomSelect } from './CustomSelect';
 
-const appWindow = getCurrentWindow();
+// 纯 Web 预览环境(无 Tauri 注入)下 getCurrentWindow 会同步抛错,
+// 捕获后降级为 null:窗口控制按钮变成 no-op,不影响页面渲染与设计预览。
+const appWindow = (() => {
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
+})();
 
 export const Header: React.FC = () => {
   const {
@@ -17,7 +25,14 @@ export const Header: React.FC = () => {
   const [appVersion, setAppVersion] = useState<string>('dev');
   useEffect(() => {
     let cancelled = false;
-    getVersion()
+    // getVersion 在非 Tauri 环境会同步抛错,先包一层
+    let promise: Promise<string>;
+    try {
+      promise = getVersion();
+    } catch {
+      promise = Promise.resolve('dev');
+    }
+    promise
       .then(v => { if (!cancelled) setAppVersion(v); })
       .catch(() => { /* 非 Tauri 环境(纯 Web 预览)时保持 dev */ });
     return () => { cancelled = true; };
@@ -54,13 +69,13 @@ export const Header: React.FC = () => {
       <div className="header-left">
         {/* macOS 三键(无边框窗口,接管窗口控制) */}
         <div className="mac-traffic-lights">
-          <button className="traffic-light traffic-light-close" title="关闭" onClick={() => appWindow.close()}>
+          <button className="traffic-light traffic-light-close" title="关闭" onClick={() => appWindow?.close()}>
             <X size={9} strokeWidth={3} />
           </button>
-          <button className="traffic-light traffic-light-minimize" title="最小化" onClick={() => appWindow.minimize()}>
+          <button className="traffic-light traffic-light-minimize" title="最小化" onClick={() => appWindow?.minimize()}>
             <Minus size={9} strokeWidth={3} />
           </button>
-          <button className="traffic-light traffic-light-maximize" title="最大化/还原" onClick={() => appWindow.toggleMaximize()}>
+          <button className="traffic-light traffic-light-maximize" title="最大化/还原" onClick={() => appWindow?.toggleMaximize()}>
             <Plus size={9} strokeWidth={3} />
           </button>
         </div>
